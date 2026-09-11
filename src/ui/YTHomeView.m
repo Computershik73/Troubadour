@@ -243,6 +243,11 @@
 
     _selectedCategory = index;
 
+    // След на нажатие: по журналу видно, дошло ли оно до загрузки.
+    NSLog(@"[YouTube/Главная] Таблетка №%ld: %@", (long)index,
+          index < (NSInteger)[_categories count]
+              ? [[_categories objectAtIndex:index] objectForKey:@"title"] : @"?");
+
     for (NSUInteger i = 0; i < [_chips count]; i++) {
         [[_chips objectAtIndex:i] setSelected:((NSInteger)i == index)];
     }
@@ -311,6 +316,11 @@
 
     // Набор запоминаем: продолжение спрашивается у того же источника.
     _categoryParams = [params copy];
+
+    NSLog(@"[YouTube/Главная] Загрузка: %@",
+          [query length] > 0 ? [NSString stringWithFormat:@"поиск «%@»", query]
+          : ([params length] > 0 ? [NSString stringWithFormat:@"лента с набором %@", params]
+                                 : @"рекомендации"));
 
     YTAsync(^{
         NSDictionary *feed = [query length] > 0

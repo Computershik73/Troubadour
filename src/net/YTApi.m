@@ -1064,10 +1064,23 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
         }
     }
 
+    /**
+     * Поиск от имени вошедшего, если вход есть.
+     *
+     * Вход по QR-коду — это токен TV-клиента (`YTAuth`), и веб-запросу он
+     * не подписывается: WEB-клиент умеет только веб-сессию (`YTWebAuth`).
+     * Оттого таблетки на «Главной», которые суть поиск, шли безымянными
+     * даже у вошедшего: без истории, без «не рекомендовать канал», без
+     * возрастных отметок. Если веб-сессии нет, а токен есть — спрашиваем
+     * тем же клиентом, что и «Главную»: TVHTML5 с токеном. Ответ поиска у
+     * него в тех же плитках, что и лента, и разбор их уже знает.
+     */
+    BOOL asTv = [YTAuth isSignedIn] && ![YTWebAuth isSignedIn];
+
     NSDictionary *json = [self post:@"search"
                                body:body
-                             client:@"WEB"
-                          authorize:NO
+                             client:asTv ? @"TVHTML5" : @"WEB"
+                          authorize:asTv
                                 ttl:0];
 
     /**
@@ -1096,7 +1109,8 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
 
         NSLog(@"[YouTube/API] Поиск ничего не дал — повторяем");
 
-        json = [self post:@"search" body:body client:@"WEB" authorize:NO ttl:0];
+        json = [self post:@"search" body:body
+                    client:asTv ? @"TVHTML5" : @"WEB" authorize:asTv ttl:0];
     }
 
     /**
