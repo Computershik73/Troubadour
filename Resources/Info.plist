@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<!--
+	    Языки, на которых приложение умеет говорить.
+
+	    От списка зависит не только перевод, но и клавиатура. iOS 6 отдаёт
+	    приложению не все включённые в системе клавиатуры, а только те, чей
+	    язык оно объявило; не объявившему не достаётся ничего, кроме
+	    английской по умолчанию, и глобус на клавиатуре не рисуется вовсе —
+	    переключать не на что.
+
+	    Объявляется двумя способами сразу, и оба нужны: ключ здесь и папки
+	    ru.lproj / en.lproj в связке. На iOS 8 и новее этой выборки уже нет.
+	-->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ru</string>
+	</array>
+	<key>CFBundleDisplayName</key>
+	<string>Troubadour</string>
+	<key>CFBundleExecutable</key>
+	<string>Troubadour</string>
+	<key>CFBundleIdentifier</key>
+	<string>ru.computershik.troubadour</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Troubadour</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.4</string>
+	<key>CFBundleVersion</key>
+	<string>1.4</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>iPhoneOS</string>
+	</array>
+	<key>MinimumOSVersion</key>
+	<string>5.1</string>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleDefault</string>
+	<!--
+	    Стилем строки состояния распоряжается приложение, а не контроллер.
+
+	    С iOS 7 по умолчанию наоборот: система спрашивает preferredStatusBarStyle
+	    у текущего контроллера, а setStatusBarStyle молча ничего не делает.
+	    Тему же выбирает пользователь, и знает о ней YTTheme, а не контроллеры —
+	    их полтора десятка, и переопределять метод в каждом значило бы размазать
+	    одно решение по всему проекту.
+
+	    На iOS 5 и 6 ключа не существует, он там просто не читается,
+	    а setStatusBarStyle работает и без него — путь получается один
+	    на весь поддерживаемый диапазон.
+	-->
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+	<key>UIPrerenderedIcon</key>
+	<true/>
+	<key>CFBundleIconFiles</key>
+	<array>
+		<string>Icon-57.png</string>
+		<string>Icon-72.png</string>
+		<string>Icon-76.png</string>
+		<string>Icon-114.png</string>
+		<string>Icon-120.png</string>
+		<string>Icon-144.png</string>
+		<string>Icon-152.png</string>
+		<string>Icon-180.png</string>
+	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<!--
+	    Шрифт.
+
+	    В UWP он подключён как `/Assets/Roboto.ttf#Roboto` и назначен сразу
+	    всем TextBlock, TextBox и Button — весь текст приложения набран им.
+	    Системного Roboto в iOS нет ни в одной версии, поэтому файлы едут
+	    в связку.
+
+	    Их четыре, а не один, и это следствие возраста системы: в UWP лежит
+	    вариативный Roboto, где насыщенность задаётся положением на оси
+	    `wght`. iOS до нашего верхнего края такого не понимает и взяла бы
+	    из файла одно начертание по умолчанию — весь текст стал бы обычным.
+	    Поэтому нужные положения выпечены в отдельные файлы заранее,
+	    tools/make-fonts.sh.
+	-->
+	<key>UIAppFonts</key>
+	<array>
+		<string>Assets/Roboto-Regular.ttf</string>
+		<string>Assets/Roboto-Medium.ttf</string>
+		<string>Assets/Roboto-SemiBold.ttf</string>
+		<string>Assets/Roboto-Bold.ttf</string>
+	</array>
+	<!--
+	    Экраны запуска.
+
+	    Это не украшение: по наличию картинки нужного размера iOS решает,
+	    умеет ли приложение работать на этом экране. Без Default-568h@2x
+	    на iPhone 5 оно запускается в режиме 320x480 — с чёрными полосами
+	    сверху и снизу. На iPhone 4 полос не было просто потому, что там
+	    экран и есть 320x480.
+
+	    Файлы с классическими именами нужны для iOS 5 и 6, где этого списка
+	    ещё не понимают; список — для iOS 7 и новее.
+	-->
+	<!--
+	    Современные экраны: iPhone X и новее картинкой не объявить.
+	    Там нужен либо launch storyboard — он несовместим с iOS 5.1
+	    и требует ibtool, которого в Theos под Linux нет, — либо этот ключ.
+	    Он появился в iOS 14 и задаётся прямо здесь, без единого файла.
+
+	    Пустой словарь означает «экран поддерживается, рисовать на нём
+	    ничего не надо». Старые системы ключа не понимают и берут картинки
+	    из UILaunchImages ниже; новые понимают и берут его — поэтому
+	    в списке нет и не нужно записей для безрамочных экранов.
+	-->
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UILaunchImages</key>
+	<array>
+		<dict>
+			<key>UILaunchImageName</key>
+			<string>Default</string>
+			<key>UILaunchImageMinimumOSVersion</key>
+			<string>7.0</string>
+			<key>UILaunchImageOrientation</key>
+			<string>Portrait</string>
+			<key>UILaunchImageSize</key>
+			<string>{320, 480}</string>
+		</dict>
+		<dict>
+			<key>UILaunchImageName</key>
+			<string>Default-568h</string>
+			<key>UILaunchImageMinimumOSVersion</key>
+			<string>7.0</string>
+			<key>UILaunchImageOrientation</key>
+			<string>Portrait</string>
+			<key>UILaunchImageSize</key>
+			<string>{320, 568}</string>
+		</dict>
+		<dict>
+			<key>UILaunchImageName</key>
+			<string>Default-667h</string>
+			<key>UILaunchImageMinimumOSVersion</key>
+			<string>8.0</string>
+			<key>UILaunchImageOrientation</key>
+			<string>Portrait</string>
+			<key>UILaunchImageSize</key>
+			<string>{375, 667}</string>
+		</dict>
+		<dict>
+			<key>UILaunchImageName</key>
+			<string>Default-736h</string>
+			<key>UILaunchImageMinimumOSVersion</key>
+			<string>8.0</string>
+			<key>UILaunchImageOrientation</key>
+			<string>Portrait</string>
+			<key>UILaunchImageSize</key>
+			<string>{414, 736}</string>
+		</dict>
+		<dict>
+			<key>UILaunchImageName</key>
+			<string>Default-Portrait</string>
+			<key>UILaunchImageMinimumOSVersion</key>
+			<string>7.0</string>
+			<key>UILaunchImageOrientation</key>
+			<string>Portrait</string>
+			<key>UILaunchImageSize</key>
+			<string>{768, 1024}</string>
+		</dict>
+		<!--
+		    Планшет лёжа — отдельная картинка, и размер у неё всё равно
+		    записан «стоя»: UILaunchImageSize всегда портретный, положение
+		    задаёт UILaunchImageOrientation. Без этой записи iOS считает,
+		    что лёжа приложение работать не умеет.
+		-->
+		<dict>
+			<key>UILaunchImageName</key>
+			<string>Default-Landscape</string>
+			<key>UILaunchImageMinimumOSVersion</key>
+			<string>7.0</string>
+			<key>UILaunchImageOrientation</key>
+			<string>Landscape</string>
+			<key>UILaunchImageSize</key>
+			<string>{768, 1024}</string>
+		</dict>
+	</array>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+
+	<!--
+	  App Transport Security: обычный HTTP разрешён.
+
+	  ATS появилась в iOS 9 и распространяется на приложения, собранные
+	  её SDK, — наш случай. Она запрещает незашифрованные соединения,
+	  и первым под запрет попадает наш же прокси: плееру он отдаёт видео
+	  по http://127.0.0.1, потому что шифровать петлю не от кого и незачем.
+
+	  Точечного исключения не выходит: NSExceptionDomains сопоставляется
+	  с доменными именами, а числовой адрес в нём не работает — так
+	  и написано у Apple. Переводить прокси на localhost ради этого значило
+	  бы гонять разрешение имени на каждом куске потока.
+
+	  Опасности в разрешении нет: наружу приложение ходит только по HTTPS
+	  и только через YTHttp, где проверка сертификата строже системной —
+	  там свои корни. Незашифрованным остаётся ровно одно соединение,
+	  и оно не покидает устройство.
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

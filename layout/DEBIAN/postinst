@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# Что нужно сделать на самом устройстве после распаковки.
+#
+# До iOS 7 не требовалось ничего: SpringBoard сам обходил /Applications и
+# запускал что найдёт. Дальше связку должен зарегистрировать LaunchServices,
+# и без этого значок либо не появляется, либо появляется, но нажатие не даёт
+# ничего — и в /var/mobile/Library/Logs/CrashReporter при этом пусто: падать
+# нечему, процесс не заводят вовсе.
+#
+# Права выставляются ещё раз, хотя они правильные и в пакете: приложение могли
+# ставить и распаковкой вручную, а связку с правами 777 система не примет.
+set -e
+
+# Имя связки менялось вместе с именем приложения; здесь оно осталось
+# прежним, и всё, что ниже, тихо не выполнялось: условие не срабатывало.
+APP=/Applications/Troubadour.app
+
+if [ -d "$APP" ]; then
+	chown -R root:wheel "$APP" 2>/dev/null || true
+
+	find "$APP" -type d -exec chmod 755 {} + 2>/dev/null || true
+	find "$APP" -type f -exec chmod 644 {} + 2>/dev/null || true
+	chmod 755 "$APP/Troubadour" 2>/dev/null || true
+
+	# Помощник, меняющий значок, работает от root: приложение своей
+	# связки переписать не может — она принадлежит root, да и песочница
+	# туда не пускает. Отсюда бит setuid; без него помощник запустится
+	# и честно откажется.
+	if [ -f "$APP/iconswitch" ]; then
+		chown root:wheel "$APP/iconswitch" 2>/dev/null || true
+		chmod 4755 "$APP/iconswitch" 2>/dev/null || true
+
+		if command -v ldid >/dev/null 2>&1; then
+			ldid -S "$APP/iconswitch" 2>/dev/null || true
+		fi
+	fi
+
+	# Своя подпись у устройства бывает старее нашей и заведомо ему понятна.
+	# Если ldid на устройстве нет — остаётся та, что приехала в пакете.
+	if command -v ldid >/dev/null 2>&1; then
+		ldid -S "$APP/Troubadour" 2>/dev/null || true
+	fi
+fi
+
+# uicache есть не везде и называется по-разному; молчаливый отказ здесь не
+# страшен — значок появится после перезапуска SpringBoard.
+if command -v uicache >/dev/null 2>&1; then
+	uicache 2>/dev/null || uicache -a 2>/dev/null || true
+fi
+
+exit 0

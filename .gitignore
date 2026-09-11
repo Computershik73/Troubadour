@@ -1,0 +1,4 @@
+.theos/
+packages/
+*.dSYM/
+.DS_Store
