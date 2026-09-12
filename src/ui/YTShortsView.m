@@ -62,6 +62,9 @@ static const CGFloat YTShortGap = 14;
 - (void)attachLayer:(CALayer *)layer;
 - (void)setBusy:(BOOL)busy;
 
+/** Крутится ли на странице кольцо ожидания. */
+- (BOOL)isBusy;
+
 /** Подписи приезжают позже самой ленты — вместе с ответом `/player`. */
 - (void)applyTitle:(NSString *)title channel:(NSString *)channel;
 
@@ -110,6 +113,9 @@ static const CGFloat YTShortGap = 14;
     UIView *_progressTrack;
     UIView *_progressFill;
     YTLoadingRing *_busy;
+
+    /** Кольцо крутится: страница ещё ждёт поток. */
+    BOOL _busyNow;
 }
 
 - (id)initWithFrame:(CGRect)frame {
@@ -376,7 +382,13 @@ static const CGFloat YTShortGap = 14;
      */
 }
 
+- (BOOL)isBusy {
+    return _busyNow;
+}
+
 - (void)setBusy:(BOOL)busy {
+    _busyNow = busy;
+
     if (busy) {
         [_busy start];
     } else {
@@ -563,6 +575,9 @@ static const CGFloat YTShortGap = 14;
     /** От чьего имени набрана нынешняя лента — см. `authChanged`. */
     NSString *_identityMark;
     BOOL _loadingMore;
+
+    /** Счёт заходов сторожа: по нему отличается свой заход от чужого. */
+    NSInteger _stuckWatch;
 
     /** Когда последний раз начинали новый ряд: чтобы не частить. */
     NSTimeInterval _freshTriedAt;
@@ -1787,6 +1802,42 @@ static const CGFloat YTShortGap = 14;
 
     NSInteger generation = [_generation current];
     NSString *videoId = item.videoId;
+
+    /**
+     * Сторож на зависшую загрузку.
+     *
+     * Журнал 97, 02:45:22: у `2vzNMTfliz4` запрос подачи ушёл и не вернулся
+     * ничем — ни куском, ни отказом. Страница так и осталась с кольцом,
+     * и ролик заиграл только после того, как человек пролистнул вперёд и
+     * вернулся: со второго захода тот же запрос прошёл за секунду.
+     *
+     * Ждать ответа бесконечно нельзя: у сети бывают дыры, и одна
+     * подвисшая просьба не должна останавливать ленту. Через двенадцать
+     * секунд, если на той же странице всё ещё кольцо, пробуем заново.
+     */
+    _stuckWatch++;
+
+    NSInteger watch = _stuckWatch;
+
+    double delay = 12.0 * NSEC_PER_SEC;
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)delay),
+                   dispatch_get_main_queue(), ^{
+        if (watch != _stuckWatch || ![_generation isCurrent:generation]) {
+            return;
+        }
+
+        if (_current < 0 || _current >= (NSInteger)[_pages count]
+            || [_pages objectAtIndex:(NSUInteger)_current] != page
+            || ![page isBusy]) {
+            return;
+        }
+
+        NSLog(@"[YouTube/Shorts] %@: загрузка молчит двенадцать секунд — "
+              @"пробуем заново", videoId);
+
+        [self playCurrent];
+    });
 
     YTAsync(^{
         /**
