@@ -1190,7 +1190,13 @@ enum { YTLiveCushion = 120 };
      * Строение сообщения — из дампа, числа — свои: высота и ширина по
      * потолку устройства (720 у старых чипов, 1080 у A5 и новее).
      */
-    NSInteger ceiling = [YTStreams deviceMaxHeight];
+    /**
+     * Не ниже ручного выбора. Человек вправе попросить 1080p и на старом
+     * чипе — меню предупреждает «может не пойти», но пробовать даёт. Заяви
+     * мы серверу потолок ниже просьбы, он откажет ещё до пробы, как в
+     * журнале 94. `_wantedHeight` ненулевой только при ручном выборе.
+     */
+    NSInteger ceiling = MAX([YTStreams deviceMaxHeight], _wantedHeight);
 
     YTProtoWriter *videoCap = [YTProtoWriter writer];
     [videoCap putVarint:2 field:1];
