@@ -616,6 +616,9 @@ static const CGFloat YTShortGap = 14;
     /** Счёт заходов сторожа: по нему отличается свой заход от чужого. */
     NSInteger _stuckWatch;
 
+    /** Когда началась нынешняя загрузка ленты. */
+    NSTimeInterval _loadStartedAt;
+
     /** Когда последний раз начинали новый ряд: чтобы не частить. */
     NSTimeInterval _freshTriedAt;
 }
@@ -1137,8 +1140,29 @@ static const CGFloat YTShortGap = 14;
 }
 
 - (void)loadMore {
+    /**
+     * Зависшая загрузка не должна запирать ленту навсегда.
+     *
+     * Флаг «идёт загрузка» снимался только по возвращении из сети, а
+     * просьба может и не вернуться — в журнале 97 такое видно на потоке
+     * ролика, где ответ не пришёл вовсе. Журнал 98: за шесть минут ни
+     * одной строки о ленте, хотя роликов оставалось меньше трёх, — то
+     * есть `loadMore` каждый раз выходил на этой самой проверке. Лента
+     * перестала расти, листать стало некуда, и последний ролик пошёл по
+     * кругу.
+     *
+     * Двадцать секунд — заведомо больше обычного ответа; после них
+     * прежнюю просьбу считаем потерянной и спрашиваем заново.
+     */
+    NSTimeInterval nowStamp = [NSDate timeIntervalSinceReferenceDate];
+
     if (_loadingMore) {
-        return;
+        if (_loadStartedAt > 0 && nowStamp - _loadStartedAt < 20.0) {
+            return;
+        }
+
+        NSLog(@"[YouTube/Shorts] Прежняя загрузка ленты молчит %.0f с — "
+              @"спрашиваем заново", nowStamp - _loadStartedAt);
     }
 
     /**
@@ -1162,6 +1186,7 @@ static const CGFloat YTShortGap = 14;
     }
 
     _loadingMore = YES;
+    _loadStartedAt = nowStamp;
 
     NSInteger generation = [_generation current];
     NSString *sequence = _sequence;
@@ -2280,6 +2305,17 @@ static const CGFloat YTShortGap = 14;
         YTMain(^{ [self repeat]; });
 
         return;
+    }
+
+    /**
+     * Дошли до последнего — просим ленту вырасти, а не молча зацикливаемся.
+     *
+     * Повтор здесь уместен как запасной ход, но без просьбы о продолжении
+     * он становится единственным: лента не растёт, листать некуда, и
+     * ролик идёт по кругу до бесконечности.
+     */
+    if (_current + 1 >= (NSInteger)[_items count]) {
+        [self loadMore];
     }
 
     if ([YTSettings autoplayNextShort] &&
