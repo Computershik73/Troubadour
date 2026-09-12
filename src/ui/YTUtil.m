@@ -1074,6 +1074,8 @@ static UINavigationController *YTNavControllerRef = nil;
 
 @end
 
+NSString *const YTReleaseHeavyNotification = @"YTReleaseHeavy";
+
 @implementation YTShare
 
 /** Поповер надо держать: отпущенный, он исчезает вместе с листом. */

@@ -267,6 +267,9 @@ CGFloat YTStatusBarHeight(void);
  * закрывались Shorts по кнопке «Поделиться». Здесь это в одном месте,
  * чтобы не разойтись снова.
  */
+/** Память кончается: отдать всё, что можно взять заново. */
+extern NSString *const YTReleaseHeavyNotification;
+
 @interface YTShare : NSObject
 
 + (void)presentSheet:(id)sheet from:(UIView *)anchor in:(UIViewController *)host;

@@ -62,6 +62,10 @@ static const CGFloat YTShortGap = 14;
 - (void)attachLayer:(CALayer *)layer;
 - (void)setBusy:(BOOL)busy;
 
+/** Отдать и вернуть полноэкранное превью — ради памяти. */
+- (void)dropThumbnail;
+- (void)restoreThumbnailIfNeeded;
+
 /** Крутится ли на странице кольцо ожидания. */
 - (BOOL)isBusy;
 
@@ -116,6 +120,9 @@ static const CGFloat YTShortGap = 14;
 
     /** Кольцо крутится: страница ещё ждёт поток. */
     BOOL _busyNow;
+
+    /** Кадр превью лежит в памяти. */
+    BOOL _thumbLoaded;
 }
 
 - (id)initWithFrame:(CGRect)frame {
@@ -332,6 +339,8 @@ static const CGFloat YTShortGap = 14;
      * у CDN картинку нулевой ширины — то есть самую мелкую, `default.jpg`
      * 120×90, а декодер с потолком в ноль пикселей не разбирал и её.
      */
+    _thumbLoaded = YES;
+
     [YTImageLoader loadInto:_thumb
                         url:item.thumbnail
                 targetWidth:[[UIScreen mainScreen] bounds].size.width];
@@ -350,6 +359,34 @@ static const CGFloat YTShortGap = 14;
         [_channel setText:channel];
         _item.channelTitle = channel;
     }
+}
+
+/**
+ * Отдать превью: полноэкранный кадр весит мегабайты.
+ *
+ * Страниц в ленте к получасу просмотра набирается больше сорока, и у
+ * каждой свой кадр во всю ширину экрана. На iPad 2 с его половиной
+ * гигабайта это сотня мегабайт мёртвым грузом — и система снимает
+ * приложение без всякого отчёта о падении. Дальнему от глаз кадру в
+ * памяти делать нечего: вернувшись, страница возьмёт его заново.
+ */
+- (void)dropThumbnail {
+    [_thumb setImage:nil];
+
+    _thumbLoaded = NO;
+}
+
+/** Взять кадр заново, если его отдали. */
+- (void)restoreThumbnailIfNeeded {
+    if (_thumbLoaded || _item == nil || [_item.thumbnail length] == 0) {
+        return;
+    }
+
+    _thumbLoaded = YES;
+
+    [YTImageLoader loadInto:_thumb
+                        url:_item.thumbnail
+                targetWidth:[[UIScreen mainScreen] bounds].size.width];
 }
 
 - (void)showThumbnail {
@@ -611,6 +648,11 @@ static const CGFloat YTShortGap = 14;
     [tap setDelegate:self];
     [self addGestureRecognizer:tap];
 
+
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(releaseHeavy)
+                                                 name:YTReleaseHeavyNotification
+                                               object:nil];
 
     _pager = [[UIScrollView alloc] initWithFrame:CGRectZero];
     [_pager setPagingEnabled:YES];
@@ -1236,6 +1278,7 @@ static const CGFloat YTShortGap = 14;
 
     _current = index;
 
+    [self freeDistantThumbnails];
     [self playCurrent];
 
     // Ближе трёх до конца — просим следующую страницу ленты.
@@ -1786,6 +1829,36 @@ static const CGFloat YTShortGap = 14;
         : [[YTChallengeViewController alloc] initForLoginWithDone:done];
 
     [YTNav push:screen];
+}
+
+/**
+ * Кадры дальних страниц отдаём, ближние держим.
+ *
+ * Две страницы в каждую сторону — это то, что человек может увидеть
+ * рывком пальца. Всё, что дальше, успеет подгрузиться заново.
+ */
+/** Память кончается — отдаём кадры всех страниц, кроме нынешней. */
+- (void)releaseHeavy {
+    for (NSUInteger i = 0; i < [_pages count]; i++) {
+        if ((NSInteger)i != _current) {
+            [[_pages objectAtIndex:i] dropThumbnail];
+        }
+    }
+
+    NSLog(@"[YouTube/Shorts] Память: отданы кадры %lu страниц",
+          (unsigned long)([_pages count] > 0 ? [_pages count] - 1 : 0));
+}
+
+- (void)freeDistantThumbnails {
+    for (NSUInteger i = 0; i < [_pages count]; i++) {
+        YTShortPage *page = [_pages objectAtIndex:i];
+
+        if (labs((long)i - (long)_current) <= 2) {
+            [page restoreThumbnailIfNeeded];
+        } else {
+            [page dropThumbnail];
+        }
+    }
 }
 
 - (void)playCurrent {

@@ -39,6 +39,19 @@
                      queue:nil
                 usingBlock:^(NSNotification *note) {
         NSLog(@"[YouTube/Память] Система просит освободить память");
+
+        /**
+         * Не только записать, но и отдать.
+         *
+         * Здесь стояла одна запись в журнал, и это было полдела: кеши
+         * отдаёт `applicationDidReceiveMemoryWarning:`, а вот кадры,
+         * уже розданные по страницам, не отдавал никто. На iPad 2 лента
+         * Shorts к получасу просмотра держала их больше сорока — по
+         * мегабайтам каждый, — и система снимала приложение молча, без
+         * отчёта о падении.
+         */
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:YTReleaseHeavyNotification object:nil];
     }];
 
     // Поднимаем сохранённый вход до того, как экраны спросят о нём.
