@@ -5770,6 +5770,17 @@ static NSMutableArray *YTJamItems = nil;
 }
 
 - (void)playbackFinished {
+    /**
+     * Тот же чужой поток, что и у Shorts: значок повтора, показ управления
+     * и остановка кольца — всё это UIKit, и делать это не из главного
+     * потока нельзя.
+     */
+    if (![NSThread isMainThread]) {
+        YTMain(^{ [self playbackFinished]; });
+
+        return;
+    }
+
     _finished = YES;
     _meantToPlay = NO;
 

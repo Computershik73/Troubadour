@@ -5605,9 +5605,13 @@ static BOOL YTShortsAuthorized = NO;
 
     NSArray *adSlots = [YTJson findAllOfAny:[NSArray arrayWithObjects:
                                                 @"adSlotRenderer",
+                                                @"adPlacementRenderer",
                                                 @"instreamVideoAdRenderer",
                                                 @"reelPlayerAdRenderer",
-                                                @"adVideoRenderer", nil]
+                                                @"adVideoRenderer",
+                                                @"linearAdSequenceRenderer",
+                                                @"displayAdRenderer",
+                                                @"adBreakServiceRenderer", nil]
                                          in:json limit:60000];
 
     for (NSDictionary *slot in adSlots) {
@@ -5633,6 +5637,22 @@ static BOOL YTShortsAuthorized = NO;
 
         if ([videoId length] != 11 || [seen containsObject:videoId]
             || [ads containsObject:videoId]) {
+            continue;
+        }
+
+        /**
+         * Второй признак рекламы — в самой ссылке.
+         *
+         * У рекламного ролика в `reelWatchEndpoint` лежат служебные поля
+         * для рекламной отчётности, которых у обычного нет. Обёртку мы
+         * ловим не всегда — их названия меняются, — а эти поля лежат
+         * прямо там, куда мы и так смотрим.
+         */
+        if ([endpoint objectForKey:@"adClientParams"] != nil
+            || [endpoint objectForKey:@"adsControlFlowOverrides"] != nil
+            || [YTJson boolIn:endpoint key:@"isAd"]) {
+            [ads addObject:videoId];
+
             continue;
         }
 
@@ -5694,6 +5714,22 @@ static BOOL YTShortsAuthorized = NO;
     if (token != nil) {
         [result setObject:token forKey:@"sequence"];
     }
+
+    /**
+     * Поимённый след ленты: без него рекламу в ней не опознать.
+     *
+     * Реклама играет не через нашу подачу и в журнале не оставляет ни
+     * строки — в журнале 96 это две с половиной минуты тишины между
+     * роликами. Зная, что было в ленте по порядку, рекламный ролик можно
+     * назвать по номеру и добавить его обёртку в опознание.
+     */
+    NSMutableString *listed = [NSMutableString string];
+
+    for (YTVideoItem *entry in items) {
+        [listed appendFormat:@"%@%@", [listed length] > 0 ? @", " : @"", entry.videoId];
+    }
+
+    NSLog(@"[YouTube/Shorts] В ленте по порядку: %@", listed);
 
     NSLog(@"[YouTube/Shorts] роликов: %lu, отдал %@ (%@), продолжение: %@",
           (unsigned long)[items count], served,
