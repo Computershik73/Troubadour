@@ -1091,11 +1091,19 @@ static const CGFloat YTShortGap = 14;
             NSArray *items = [feed objectForKey:@"items"];
 
             if ([items count] == 0) {
+                NSLog(@"[YouTube/Shorts] Лента кончилась: страница пуста, "
+                      @"всего роликов %lu", (unsigned long)[_items count]);
+
                 _sequence = nil;
                 return;
             }
 
             _sequence = [feed objectForKey:@"sequence"];
+
+            NSLog(@"[YouTube/Shorts] Страница: +%lu, всего %lu, продолжение %@",
+                  (unsigned long)[items count],
+                  (unsigned long)([_items count] + [items count]),
+                  [_sequence length] > 0 ? @"есть" : @"НЕТ — дальше не листаем");
 
             [_items addObjectsFromArray:items];
             [self rebuild];
@@ -1601,8 +1609,10 @@ static const CGFloat YTShortGap = 14;
             applicationActivities:nil];
 
         // У раздела своего контроллера нет — показываем от корневого.
-        [[[[UIApplication sharedApplication] keyWindow] rootViewController]
-            presentViewController:activity animated:YES completion:nil];
+        UIViewController *root =
+            [[[UIApplication sharedApplication] keyWindow] rootViewController];
+
+        [YTShare presentSheet:activity from:self in:root];
 
         return;
     }

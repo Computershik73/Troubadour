@@ -1073,3 +1073,57 @@ static UINavigationController *YTNavControllerRef = nil;
 }
 
 @end
+
+@implementation YTShare
+
+/** Поповер надо держать: отпущенный, он исчезает вместе с листом. */
+static id YTSharePopover = nil;
+
++ (void)presentSheet:(id)sheet from:(UIView *)anchor in:(UIViewController *)host {
+    if (sheet == nil || host == nil) {
+        return;
+    }
+
+    if (UI_USER_INTERFACE_IDIOM() != UIUserInterfaceIdiomPad) {
+        [host presentViewController:sheet animated:YES completion:nil];
+
+        return;
+    }
+
+    /**
+     * На седьмой iOS и старше поповер заводится вручную, на восьмой и
+     * новее — через `popoverPresentationController` у самого листа.
+     * Проверяем, что есть, а не версию: так честнее и короче.
+     */
+    if ([sheet respondsToSelector:@selector(popoverPresentationController)]) {
+        id popover = [sheet popoverPresentationController];
+
+        if (popover != nil) {
+            [popover setSourceView:(anchor != nil ? anchor : [host view])];
+            [popover setSourceRect:(anchor != nil
+                ? [anchor bounds] : CGRectMake(CGRectGetMidX([[host view] bounds]),
+                                               CGRectGetMidY([[host view] bounds]), 1, 1))];
+        }
+
+        [host presentViewController:sheet animated:YES completion:nil];
+
+        return;
+    }
+
+    Class popoverClass = NSClassFromString(@"UIPopoverController");
+
+    if (popoverClass == nil) {
+        return;
+    }
+
+    YTSharePopover = [[popoverClass alloc] initWithContentViewController:sheet];
+
+    UIView *source = (anchor != nil) ? anchor : [host view];
+
+    [YTSharePopover presentPopoverFromRect:[source bounds]
+                                    inView:source
+                  permittedArrowDirections:UIPopoverArrowDirectionAny
+                                  animated:YES];
+}
+
+@end

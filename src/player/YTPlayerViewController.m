@@ -403,6 +403,9 @@ static const CGFloat YTPageMargin = 16;
     NSInteger _refusalRetries;
     BOOL _finished;
 
+    /** Человек хотел смотреть: пауза не его, а системы или фона. */
+    BOOL _meantToPlay;
+
     /** Отмечали ли уже этот ролик просмотренным. */
     BOOL _watchReported;
 
@@ -3265,7 +3268,7 @@ static const CGFloat YTPageMargin = 16;
         id controller = [[sheet alloc] initWithActivityItems:items
                                        applicationActivities:nil];
 
-        [self presentViewController:controller animated:YES completion:nil];
+        [YTShare presentSheet:controller from:_shareTouch in:self];
 
         return;
     }
@@ -5768,6 +5771,16 @@ static NSMutableArray *YTJamItems = nil;
 
 - (void)playbackFinished {
     _finished = YES;
+    _meantToPlay = NO;
+
+    /**
+     * Кольцо ожидания гасим: ролик доиграл, ждать больше нечего.
+     *
+     * Без этого оно оставалось крутиться поверх значка повтора — если
+     * было запущено перемоткой или загрузкой и никто его не остановил.
+     * Со стороны это выглядит как «ролик кончился, а он всё грузится».
+     */
+    [_busy stop];
 
     [_playPause setImage:YTDarkIcon(@"pl_replay") forState:UIControlStateNormal];
     [self showControls];
@@ -5941,6 +5954,8 @@ static NSMutableArray *YTJamItems = nil;
     }
 
     if ([_player rate] > 0) {
+        _meantToPlay = NO;
+
         [_player pause];
         [_playPause setImage:YTDarkIcon(@"pl_play") forState:UIControlStateNormal];
     } else {
@@ -6520,6 +6535,8 @@ static NSMutableArray *YTJamItems = nil;
  * Ноль недопустим: это не «обычная скорость», а пауза.
  */
 - (void)resumeAtChosenRate {
+    _meantToPlay = YES;
+
     if (_rate > 0 && _rate != 1.0f) {
         [_player setRate:_rate];
         return;
@@ -7172,6 +7189,21 @@ static NSMutableArray *YTJamItems = nil;
      * черноту дольше нужного в том случае, когда пересборка неизбежна.
      */
     [self performSelector:@selector(checkSurface) withObject:nil afterDelay:0.25];
+
+    /**
+     * Играли до того, как погас экран, — играем и после.
+     *
+     * Поверхность мы возвращаем, а ход — нет: система успевает остановить
+     * показ, пока приложение не деятельно, и он так и стоит. Со стороны
+     * это «ролик открыт, а не идёт, пока не закроешь и не откроешь
+     * заново». Возобновляем только то, что человек сам не ставил на
+     * паузу и что не доиграло до конца.
+     */
+    if (_meantToPlay && !_finished && [_player rate] <= 0) {
+        NSLog(@"[YouTube/Плеер] Вернулись из фона на паузе — продолжаем");
+
+        [self resumeAtChosenRate];
+    }
 }
 
 /** Ожил ли слой сам; если нет — собираем заново, как раньше. */

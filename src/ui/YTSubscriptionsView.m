@@ -464,12 +464,21 @@ static const CGFloat YTChannelAvatar = 56;
 
     _stripWidth = width;
 
-    [self loadVisibleAvatars];
-
     [_strip setFrame:CGRectMake(0, 0, width,
                                 YTStripTop + YTStripHeight + YTStripBottom)];
 
     [_table setTableHeaderView:_strip];
+
+    /**
+     * Кружки берём **после** того, как полоса получила размер.
+     *
+     * `loadVisibleAvatars` первым делом смотрит на ширину полосы и при
+     * нуле молча выходит. Стоял он выше `setFrame:`, то есть у полосы
+     * шириной ноль, — и не грузил ничего. Дальше его зовёт только
+     * прокрутка полосы вбок, поэтому кружки появлялись лишь у того, кто
+     * догадался её потянуть, а у остальных подписки стояли пустыми.
+     */
+    [self loadVisibleAvatars];
 }
 
 /** Выбран канал в полосе — или «Все», и тогда возвращается общая лента. */

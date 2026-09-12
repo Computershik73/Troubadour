@@ -514,6 +514,11 @@
 
             [_pager setToken:[feed objectForKey:@"continuation"]];
 
+            NSLog(@"[YouTube/Главная] Страница: +%lu, всего %lu, продолжение %@",
+                  (unsigned long)[items count], (unsigned long)[_items count],
+                  [[feed objectForKey:@"continuation"] length] > 0
+                      ? @"есть" : @"НЕТ — лента кончилась");
+
             /**
              * Последний ряд мог быть неполным: на планшете в ряду три
              * места, а страница кончается на любом числе роликов.

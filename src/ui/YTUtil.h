@@ -258,3 +258,17 @@ CGFloat YTStatusBarHeight(void);
 - (void)finish;
 
 @end
+
+/**
+ * Показ листа «Поделиться».
+ *
+ * На iPad `UIActivityViewController` обязан выходить поповером: показанный
+ * обычным способом, он бросает исключение и уносит приложение. Именно так
+ * закрывались Shorts по кнопке «Поделиться». Здесь это в одном месте,
+ * чтобы не разойтись снова.
+ */
+@interface YTShare : NSObject
+
++ (void)presentSheet:(id)sheet from:(UIView *)anchor in:(UIViewController *)host;
+
+@end
