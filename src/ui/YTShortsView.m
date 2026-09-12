@@ -1247,6 +1247,8 @@ static const CGFloat YTShortGap = 14;
             }
 
             [_items addObjectsFromArray:fresh];
+
+            [self trimOldPages];
             [self rebuild];
         });
     });
@@ -1862,6 +1864,61 @@ static const CGFloat YTShortGap = 14;
  * Две страницы в каждую сторону — это то, что человек может увидеть
  * рывком пальца. Всё, что дальше, успеет подгрузиться заново.
  */
+/**
+ * Лента растёт вперёд — значит должна убывать сзади.
+ *
+ * Сделав её бесконечной, я оставил её ещё и вечной: страницы копились без
+ * счёта, и к получасу просмотра их набиралось под сорок. Отданные кадры
+ * дальних страниц беду отсрочили — в журнале 99 видно, как по первой
+ * просьбе системы отдались двадцать восемь, — но не отменили: через шесть
+ * минут пришла вторая просьба, и приложение сняли.
+ *
+ * Оставляем окно вокруг нынешней страницы. Всё, что ушло за его край
+ * назад, выбрасывается вместе со своим видом: вернуться туда пальцем
+ * человек уже не может, лента листается только вперёд.
+ *
+ * Во время движения пальца не трогаем ничего: сдвиг страниц под рукой
+ * выглядел бы рывком.
+ */
+- (void)trimOldPages {
+    const NSInteger keepBehind = 8;
+    const NSInteger limit = 24;
+
+    if ((NSInteger)[_items count] <= limit || _current <= keepBehind) {
+        return;
+    }
+
+    if ([_pager isDragging] || [_pager isDecelerating]) {
+        return;
+    }
+
+    NSInteger drop = _current - keepBehind;
+
+    if (drop <= 0) {
+        return;
+    }
+
+    for (NSInteger i = 0; i < drop && [_pages count] > 0; i++) {
+        YTShortPage *page = [_pages objectAtIndex:0];
+
+        [page dropThumbnail];
+        [page removeFromSuperview];
+        [_pages removeObjectAtIndex:0];
+        [_items removeObjectAtIndex:0];
+    }
+
+    _current -= drop;
+
+    NSLog(@"[YouTube/Shorts] Выброшено страниц сзади: %ld, осталось %lu",
+          (long)drop, (unsigned long)[_items count]);
+
+    CGFloat height = [_pager bounds].size.height;
+
+    if (height > 0) {
+        [_pager setContentOffset:CGPointMake(0, height * _current) animated:NO];
+    }
+}
+
 /** Память кончается — отдаём кадры всех страниц, кроме нынешней. */
 - (void)releaseHeavy {
     for (NSUInteger i = 0; i < [_pages count]; i++) {
