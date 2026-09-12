@@ -1,4 +1,6 @@
 #import "YTApi.h"
+#import "YTSabr.h"
+#import "YTProto.h"
 
 #import "YTStrings.h"
 
@@ -915,11 +917,67 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
     if ([continuation length] > 0) {
         [body setObject:continuation forKey:@"continuation"];
     } else {
-        [body setObject:@"FEwhat_to_watch" forKey:@"browseId"];
+        /**
+         * Набор в `params` сервер не читает — отвечает обычной лентой.
+         *
+         * Журнал 94: с `params=EgIIBBoETGl2ZUgC` пришло двадцать три обычных
+         * ролика. В браузере таблетка листается не так: он берёт из ответа
+         * «Главной» облако таблеток `chipCloudChipRenderer`, и у каждой
+         * лежит своя метка продолжения — та самая длинная строка из curl,
+         * внутри которой и зашит этот набор. Её и отправляем.
+         *
+         * Таблетку ищем не по названию (оно зависит от языка), а по
+         * набору: раскладываем метку и смотрим, есть ли в ней наш `params`.
+         */
+        NSDictionary *home = [self post:@"browse"
+                                   body:[NSDictionary dictionaryWithObject:@"FEwhat_to_watch"
+                                                                    forKey:@"browseId"]
+                                 client:@"WEB"
+                              authorize:NO
+                                    ttl:0];
 
-        if ([params length] > 0) {
-            [body setObject:params forKey:@"params"];
+        NSArray *chips = [YTJson findAll:@"chipCloudChipRenderer" in:home limit:4000];
+        NSString *token = nil;
+        NSString *title = nil;
+
+        for (NSDictionary *chip in chips) {
+            NSString *candidate = [YTJson findString:@"token" in:chip limit:60];
+
+            if ([candidate length] == 0) {
+                continue;
+            }
+
+            NSData *outer = [YTSabr dataFromBase64Url:candidate];
+            YTProtoReader *reader = [YTProtoReader readerWithData:outer];
+            NSString *inner = nil;
+
+            while ([reader next]) {
+                if ([reader field] == 3) {
+                    inner = [reader takeString];
+                }
+            }
+
+            NSData *unwrapped = [YTSabr dataFromBase64Url:inner];
+            NSString *plain = [[NSString alloc] initWithData:unwrapped
+                                                    encoding:NSASCIIStringEncoding];
+
+            if ([plain rangeOfString:params].location != NSNotFound) {
+                token = candidate;
+                title = [YTJson renderedText:chip key:@"text"];
+
+                break;
+            }
         }
+
+        NSLog(@"[YouTube/API] Таблеток в ленте %lu, с набором %@ — %@",
+              (unsigned long)[chips count], params,
+              token != nil ? [NSString stringWithFormat:@"«%@»", title] : @"нет");
+
+        if (token == nil) {
+            return nil;
+        }
+
+        [body setObject:token forKey:@"continuation"];
     }
 
     NSDictionary *feed = [self feedFrom:[self post:@"browse"

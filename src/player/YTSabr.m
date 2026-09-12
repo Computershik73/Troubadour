@@ -3,6 +3,7 @@
 #import <UIKit/UIKit.h>
 
 #import "YTApi.h"
+#import "YTStreams.h"
 #import "YTHttp.h"
 #import "YTNSig.h"
 #import "YTProto.h"
@@ -1176,13 +1177,44 @@ enum { YTLiveCushion = 120 };
      * ровно наше: браузер человека принуждён к H.264 и 720p, как и мы.
      * Ставим дословно.
      */
-    static const uint8_t caps[44] = {
-        0x0a,0x13,0x08,0x02,0x10,0x01,0x18,0xd0,0x05,0x20,0x80,0x0a,0x58,0x1e,
-        0x60,0x92,0xe9,0xa3,0x01,0x78,0x00,0x12,0x06,0x08,0x01,0x10,0x02,0x30,
-        0x00,0x22,0x89,0x80,0x00,0x08,0xf9,0x01,0x08,0xde,0x02,0x08,0x96,0x02,
-        0x28,0x03 };
+    /**
+     * Поле 38 — заявление о возможностях, и оно должно быть **нашим**.
+     *
+     * В 1.4-164 я скопировал его у телевизора байт в байт, а внутри там
+     * стояло `720×1280`: браузер человека принуждён расширением к 720p,
+     * и телевизор честно так и сказал. Мы повторили за ним — и сервер
+     * стал отвечать на просьбу о 1080p перезапросом и отказом (журнал 94,
+     * 00:46:51: «перезапрос:138», затем «отказ:26»). Обычные ролики
+     * потеряли 1080p, хотя устройство его тянет.
+     *
+     * Строение сообщения — из дампа, числа — свои: высота и ширина по
+     * потолку устройства (720 у старых чипов, 1080 у A5 и новее).
+     */
+    NSInteger ceiling = [YTStreams deviceMaxHeight];
 
-    [state putData:[NSData dataWithBytes:caps length:sizeof(caps)] field:38];
+    YTProtoWriter *videoCap = [YTProtoWriter writer];
+    [videoCap putVarint:2 field:1];
+    [videoCap putVarint:1 field:2];
+    [videoCap putVarint:(uint64_t)ceiling field:3];
+    [videoCap putVarint:(uint64_t)(ceiling * 16 / 9) field:4];
+    [videoCap putVarint:30 field:11];
+    [videoCap putVarint:2684048 field:12];
+    [videoCap putVarint:0 field:15];
+
+    YTProtoWriter *audioCap = [YTProtoWriter writer];
+    [audioCap putVarint:1 field:1];
+    [audioCap putVarint:2 field:2];
+    [audioCap putVarint:0 field:6];
+
+    YTProtoWriter *caps = [YTProtoWriter writer];
+    [caps putMessage:videoCap field:1];
+    [caps putMessage:audioCap field:2];
+    [caps putVarint:249 field:4];
+    [caps putVarint:350 field:4];
+    [caps putVarint:278 field:4];
+    [caps putVarint:3 field:5];
+
+    [state putMessage:caps field:38];
 
     [state putVarint:3 field:40];
     [state putBool:NO field:58];
@@ -1191,10 +1223,15 @@ enum { YTLiveCushion = 120 };
      * Поле 59 у телевизора — 2160, высота его панели. Наша панель ниже;
      * говорим свою, в тех же единицах.
      */
+    /**
+     * Поле 59 — не ниже потолка качества. У iPad 2 экран 1024 точки, а
+     * 1080p он раскодирует; сказав «1024», мы сами отрезали себе 1080p.
+     */
     CGSize screen = [[UIScreen mainScreen] bounds].size;
     CGFloat panelScale = [[UIScreen mainScreen] scale];
+    NSInteger panel = (NSInteger)(MAX(screen.width, screen.height) * panelScale);
 
-    [state putVarint:(uint64_t)(MAX(screen.width, screen.height) * panelScale) field:59];
+    [state putVarint:(uint64_t)MAX(panel, ceiling) field:59];
 
     if (_liveMode) {
         [state putBool:YES field:71];
