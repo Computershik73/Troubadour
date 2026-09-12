@@ -68,6 +68,9 @@ static const CGFloat YTShortGap = 14;
 /** Три действия правого верхнего угла: поиск, качество, «ещё». */
 - (void)setTopActions:(NSArray *)actions;
 
+/** Кнопка «Поделиться»: якорь поповера на iPad. */
+- (UIView *)shareButton;
+
 /** Четыре действия столбца: нравится, не нравится, комментарии, поделиться. */
 - (void)setRailActions:(NSArray *)actions;
 
@@ -242,6 +245,11 @@ static const CGFloat YTShortGap = 14;
     for (NSUInteger i = 0; i < [_topButtons count] && i < [actions count]; i++) {
         [[_topButtons objectAtIndex:i] setOnTap:[actions objectAtIndex:i]];
     }
+}
+
+/** Кнопка «Поделиться» — от неё растёт поповер на iPad. */
+- (UIView *)shareButton {
+    return ([_buttons count] > 3) ? [_buttons objectAtIndex:3] : self;
 }
 
 - (void)setRailActions:(NSArray *)actions {
@@ -555,6 +563,9 @@ static const CGFloat YTShortGap = 14;
     /** От чьего имени набрана нынешняя лента — см. `authChanged`. */
     NSString *_identityMark;
     BOOL _loadingMore;
+
+    /** Когда последний раз начинали новый ряд: чтобы не частить. */
+    NSTimeInterval _freshTriedAt;
 }
 
 - (id)initWithFrame:(CGRect)frame {
@@ -1069,8 +1080,28 @@ static const CGFloat YTShortGap = 14;
 }
 
 - (void)loadMore {
-    if (_loadingMore || [_sequence length] == 0) {
+    if (_loadingMore) {
         return;
+    }
+
+    /**
+     * Ряд кончился — просим новый, а не упираемся в стену.
+     *
+     * TV-клиент отдаёт короткий ряд и больше не даёт продолжения: в
+     * журнале это «роликов: 11 … продолжение: нет», после чего листать
+     * становилось некуда. Лента Shorts бесконечна по своей природе, и
+     * упираться в её конец человек не должен. Пустая метка — просто
+     * повод начать новый ряд с чистого листа; уже виденное отсеется ниже.
+     */
+    if ([_sequence length] == 0) {
+        if (_freshTriedAt > 0
+            && [NSDate timeIntervalSinceReferenceDate] - _freshTriedAt < 10.0) {
+            return;
+        }
+
+        _freshTriedAt = [NSDate timeIntervalSinceReferenceDate];
+
+        NSLog(@"[YouTube/Shorts] Ряд кончился — просим новый");
     }
 
     _loadingMore = YES;
@@ -1091,8 +1122,8 @@ static const CGFloat YTShortGap = 14;
             NSArray *items = [feed objectForKey:@"items"];
 
             if ([items count] == 0) {
-                NSLog(@"[YouTube/Shorts] Лента кончилась: страница пуста, "
-                      @"всего роликов %lu", (unsigned long)[_items count]);
+                NSLog(@"[YouTube/Shorts] Страница пуста, всего роликов %lu",
+                      (unsigned long)[_items count]);
 
                 _sequence = nil;
                 return;
@@ -1100,12 +1131,40 @@ static const CGFloat YTShortGap = 14;
 
             _sequence = [feed objectForKey:@"sequence"];
 
-            NSLog(@"[YouTube/Shorts] Страница: +%lu, всего %lu, продолжение %@",
-                  (unsigned long)[items count],
-                  (unsigned long)([_items count] + [items count]),
-                  [_sequence length] > 0 ? @"есть" : @"НЕТ — дальше не листаем");
+            /**
+             * Уже виденное не показываем дважды: новый ряд начинается с
+             * чистого листа и вполне может повторить то, что человек
+             * только что пролистал.
+             */
+            NSMutableSet *have = [NSMutableSet set];
 
-            [_items addObjectsFromArray:items];
+            for (YTVideoItem *known in _items) {
+                if ([known.videoId length] > 0) {
+                    [have addObject:known.videoId];
+                }
+            }
+
+            NSMutableArray *fresh = [NSMutableArray array];
+
+            for (YTVideoItem *candidate in items) {
+                if ([candidate.videoId length] > 0
+                    && ![have containsObject:candidate.videoId]) {
+                    [fresh addObject:candidate];
+                    [have addObject:candidate.videoId];
+                }
+            }
+
+            NSLog(@"[YouTube/Shorts] Страница: пришло %lu, новых %lu, "
+                  @"всего %lu, продолжение %@",
+                  (unsigned long)[items count], (unsigned long)[fresh count],
+                  (unsigned long)([_items count] + [fresh count]),
+                  [_sequence length] > 0 ? @"есть" : @"нет — начнём новый ряд");
+
+            if ([fresh count] == 0) {
+                return;
+            }
+
+            [_items addObjectsFromArray:fresh];
             [self rebuild];
         });
     });
@@ -1588,6 +1647,15 @@ static const CGFloat YTShortGap = 14;
 }
 
 /** «Ещё» — пока это «поделиться»: в оригинале за ним тот же список. */
+/** Кнопка «Поделиться» нынешней страницы — или сам раздел, если её нет. */
+- (UIView *)shareAnchor {
+    if (_current >= 0 && _current < (NSInteger)[_pages count]) {
+        return [[_pages objectAtIndex:(NSUInteger)_current] shareButton];
+    }
+
+    return self;
+}
+
 - (void)shareCurrent {
     if (_current < 0 || _current >= (NSInteger)[_items count]) {
         return;
@@ -1612,7 +1680,7 @@ static const CGFloat YTShortGap = 14;
         UIViewController *root =
             [[[UIApplication sharedApplication] keyWindow] rootViewController];
 
-        [YTShare presentSheet:activity from:self in:root];
+        [YTShare presentSheet:activity from:[self shareAnchor] in:root];
 
         return;
     }
@@ -2039,11 +2107,8 @@ static const CGFloat YTShortGap = 14;
 
             [page applyAvatar:[details objectForKey:@"channelThumbnail"]];
 
-            NSString *channel = [details objectForKey:@"channelTitle"];
-
-            if ([channel length] > 0) {
-                [page applyTitle:nil channel:channel];
-            }
+            [page applyTitle:[details objectForKey:@"title"]
+                     channel:[details objectForKey:@"channelTitle"]];
 
             /**
              * Оценку с сервера ставим, только если человек не успел

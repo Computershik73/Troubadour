@@ -3751,9 +3751,17 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
      *
      * Запрос лишний, поэтому идёт только когда нужного и правда нет.
      */
+    /**
+     * Название — тоже из нужного.
+     *
+     * В ленте Shorts его нет: TV-клиент отвечает на `reel_watch_sequence`
+     * без `reelPlayerOverlayRenderer`, и у всех роликов оставалась метка
+     * «Shorts», которую страница показывает пустой строкой. Оттого
+     * подписи под роликами и были пустыми на всех Shorts подряд.
+     */
     NSArray *wanted = [NSArray arrayWithObjects:
         @"likes", @"comments", @"channelThumbnail", @"commentsToken",
-        @"channelTitle", @"subscribers", nil];
+        @"channelTitle", @"subscribers", @"title", nil];
 
     BOOL missing = NO;
 
@@ -5585,12 +5593,46 @@ static BOOL YTShortsAuthorized = NO;
      * дереву находит оба случая, как и `ExtractShortsEntries` с его
      * запасным обходом.
      */
+    /**
+     * Рекламу в ленту не пускаем.
+     *
+     * Она приходит теми же `reelWatchEndpoint`, но лежит внутри
+     * рекламных обёрток. Собираем их отдельно, вынимаем оттуда номера
+     * роликов — и эти номера в ленту не берём вовсе, чтобы человеку не
+     * пришлось их пролистывать.
+     */
+    NSMutableSet *ads = [NSMutableSet set];
+
+    NSArray *adSlots = [YTJson findAllOfAny:[NSArray arrayWithObjects:
+                                                @"adSlotRenderer",
+                                                @"instreamVideoAdRenderer",
+                                                @"reelPlayerAdRenderer",
+                                                @"adVideoRenderer", nil]
+                                         in:json limit:60000];
+
+    for (NSDictionary *slot in adSlots) {
+        for (NSDictionary *inner in [YTJson findAll:@"reelWatchEndpoint"
+                                                 in:slot limit:4000]) {
+            NSString *adVideo = [YTJson textIn:inner key:@"videoId"];
+
+            if ([adVideo length] == 11) {
+                [ads addObject:adVideo];
+            }
+        }
+    }
+
+    if ([ads count] > 0) {
+        NSLog(@"[YouTube/Shorts] Рекламных роликов в ответе: %lu — пропускаем",
+              (unsigned long)[ads count]);
+    }
+
     NSArray *endpoints = [YTJson findAll:@"reelWatchEndpoint" in:json limit:60000];
 
     for (NSDictionary *endpoint in endpoints) {
         NSString *videoId = [YTJson textIn:endpoint key:@"videoId"];
 
-        if ([videoId length] != 11 || [seen containsObject:videoId]) {
+        if ([videoId length] != 11 || [seen containsObject:videoId]
+            || [ads containsObject:videoId]) {
             continue;
         }
 
