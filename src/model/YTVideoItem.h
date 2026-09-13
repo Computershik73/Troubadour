@@ -72,6 +72,15 @@ NSString *YTTileLineText(NSDictionary *line, NSInteger index);
 @property (nonatomic, assign) double watchedShare;
 
 /**
+ * С какой секунды продолжать, по слову сервера.
+ *
+ * Приходит в `watchEndpoint.startTimeSeconds` у той же плитки, где лежит
+ * доля просмотра. Ноль — начинать сначала: так сервер отвечает и о
+ * недосмотренных с самого начала, и о досмотренных до конца.
+ */
+@property (nonatomic, assign) NSTimeInterval resumeAt;
+
+/**
  * Вертикальный ролик. Отмечается при разборе Shorts и нужен карточке:
  * у такого превью пропорция 9:16, и в место под 16:9 оно вписывалось
  * с обрезкой по бокам — от кадра оставалась узкая полоса посередине.

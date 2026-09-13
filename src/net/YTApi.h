@@ -49,8 +49,8 @@
  */
 + (NSArray *)homeCategories;
 
-/** Лента таблетки с набором — WEB-клиентом, как её листает браузер. */
-+ (NSDictionary *)chipFeed:(NSString *)params continuation:(NSString *)continuation;
+/** Вкладка «Сейчас в эфире»: `FEtopics_live`, отвечает полками. */
++ (NSDictionary *)liveFeed:(NSString *)continuation;
 
 /**
  * Лента «Главной». `params` сохранён для совместимости вызова и в обычном

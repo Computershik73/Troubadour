@@ -911,86 +911,94 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
  * подписывает веб-клиента сам, когда веб-сессия есть. Нет её — запрос
  * уходит безымянным, и трансляции всё равно приходят: подборка не личная.
  */
-+ (NSDictionary *)chipFeed:(NSString *)params continuation:(NSString *)continuation {
+/**
+ * Лента с полками: заголовок и его плитки.
+ *
+ * Разбор тот же, что у «Истории» с её днями: полка — это `shelfRenderer`
+ * с заголовком, внутри плитки. Вынесен сюда, чтобы не повторять.
+ */
++ (NSArray *)shelvesIn:(NSDictionary *)json {
+    NSMutableArray *groups = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+
+    NSArray *names = [NSArray arrayWithObjects:
+        @"shelfRenderer", @"richShelfRenderer", @"itemSectionRenderer", nil];
+
+    for (NSDictionary *hit in [YTJson findAllOfAny:names in:json limit:200000]) {
+        NSDictionary *node = [hit objectForKey:@"node"];
+        NSString *title = [self historyDayTitleIn:node];
+
+        if ([title length] == 0) {
+            continue;
+        }
+
+        NSMutableArray *items = [NSMutableArray array];
+
+        for (YTVideoItem *item in [YTVideoItem parseFrom:node]) {
+            NSString *key = [item.videoId length] > 0 ? item.videoId : item.title;
+
+            if ([key length] == 0 || [seen containsObject:key]) {
+                continue;
+            }
+
+            [seen addObject:key];
+            [items addObject:item];
+        }
+
+        if ([items count] == 0) {
+            continue;
+        }
+
+        [groups addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+            title, @"title", items, @"items", nil]];
+    }
+
+    return groups;
+}
+
+/**
+ * Вкладка «Сейчас в эфире» — это `FEtopics_live` у TV-клиента.
+ *
+ * Прежде здесь была возня с набором `EgIIBBoETGl2ZUgC` и меткой из облака
+ * таблеток: я искал эфиры там, где их листает веб. Дамп yttv7 показал, что
+ * у телевизора для этого свой раздел — `FEtopics_live`, рядом с
+ * `FEtopics_gaming` и `FEtopics_music`. Он и отвечает полками:
+ * «Recommended», «Live Now», «Recent Live Streams».
+ */
++ (NSDictionary *)liveFeed:(NSString *)continuation {
     NSMutableDictionary *body = [NSMutableDictionary dictionary];
 
     if ([continuation length] > 0) {
         [body setObject:continuation forKey:@"continuation"];
     } else {
-        /**
-         * Набор в `params` сервер не читает — отвечает обычной лентой.
-         *
-         * Журнал 94: с `params=EgIIBBoETGl2ZUgC` пришло двадцать три обычных
-         * ролика. В браузере таблетка листается не так: он берёт из ответа
-         * «Главной» облако таблеток `chipCloudChipRenderer`, и у каждой
-         * лежит своя метка продолжения — та самая длинная строка из curl,
-         * внутри которой и зашит этот набор. Её и отправляем.
-         *
-         * Таблетку ищем не по названию (оно зависит от языка), а по
-         * набору: раскладываем метку и смотрим, есть ли в ней наш `params`.
-         */
-        NSDictionary *home = [self post:@"browse"
-                                   body:[NSDictionary dictionaryWithObject:@"FEwhat_to_watch"
-                                                                    forKey:@"browseId"]
-                                 client:@"WEB"
-                              authorize:NO
-                                    ttl:0];
-
-        NSArray *chips = [YTJson findAll:@"chipCloudChipRenderer" in:home limit:4000];
-        NSString *token = nil;
-        NSString *title = nil;
-
-        for (NSDictionary *chip in chips) {
-            NSString *candidate = [YTJson findString:@"token" in:chip limit:60];
-
-            if ([candidate length] == 0) {
-                continue;
-            }
-
-            NSData *outer = [YTSabr dataFromBase64Url:candidate];
-            YTProtoReader *reader = [YTProtoReader readerWithData:outer];
-            NSString *inner = nil;
-
-            while ([reader next]) {
-                if ([reader field] == 3) {
-                    inner = [reader takeString];
-                }
-            }
-
-            NSData *unwrapped = [YTSabr dataFromBase64Url:inner];
-            NSString *plain = [[NSString alloc] initWithData:unwrapped
-                                                    encoding:NSASCIIStringEncoding];
-
-            if ([plain rangeOfString:params].location != NSNotFound) {
-                token = candidate;
-                title = [YTJson renderedText:chip key:@"text"];
-
-                break;
-            }
-        }
-
-        NSLog(@"[YouTube/API] Таблеток в ленте %lu, с набором %@ — %@",
-              (unsigned long)[chips count], params,
-              token != nil ? [NSString stringWithFormat:@"«%@»", title] : @"нет");
-
-        if (token == nil) {
-            return nil;
-        }
-
-        [body setObject:token forKey:@"continuation"];
+        [body setObject:@"FEtopics_live" forKey:@"browseId"];
     }
 
-    NSDictionary *feed = [self feedFrom:[self post:@"browse"
-                                              body:body
-                                            client:@"WEB"
-                                         authorize:NO
-                                               ttl:0]];
+    NSDictionary *json = [self post:@"browse"
+                               body:body
+                             client:@"TVHTML5"
+                          authorize:YES
+                                ttl:0];
 
-    NSLog(@"[YouTube/API] Лента таблетки (%@): роликов %lu",
-          [params length] > 0 ? params : @"продолжение",
-          (unsigned long)[[feed objectForKey:@"items"] count]);
+    if (json == nil) {
+        return nil;
+    }
 
-    return feed;
+    NSMutableDictionary *result =
+        [NSMutableDictionary dictionaryWithDictionary:[self feedFrom:json]];
+
+    NSArray *groups = [self shelvesIn:json];
+
+    if ([groups count] > 0) {
+        [result setObject:groups forKey:@"groups"];
+    }
+
+    NSLog(@"[YouTube/API] Эфиры: полок %lu, роликов %lu, продолжение %@",
+          (unsigned long)[groups count],
+          (unsigned long)[[result objectForKey:@"items"] count],
+          [result objectForKey:@"continuation"] != nil ? @"есть" : @"нет");
+
+    return result;
 }
 
 + (NSArray *)homeCategories {
@@ -1081,7 +1089,7 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
         NSMutableDictionary *live = [NSMutableDictionary dictionary];
 
         [live setObject:YTLoc(@"Сейчас в эфире") forKey:@"title"];
-        [live setObject:@"EgIIBBoETGl2ZUgC" forKey:@"params"];
+        [live setObject:@"FEtopics_live" forKey:@"browse"];
 
         [list insertObject:live atIndex:1];
 

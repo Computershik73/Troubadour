@@ -277,6 +277,20 @@ static double YTWatchedShareIn(id renderer) {
     return MIN(1.0, (double)percent / 100.0);
 }
 
+/**
+ * С какой секунды продолжать — по слову сервера.
+ *
+ * `watchEndpoint.startTimeSeconds`: дамп yttv7, плитка ролика
+ * `cOEPwN4E3qo` со `startTimeSeconds: 1556` рядом с долей просмотра в
+ * десять процентов. Своего хранилища для этого больше не нужно: сервер
+ * знает и о просмотрах с других устройств, и о том, что ролик досмотрен.
+ */
+static NSTimeInterval YTResumeAtIn(id renderer) {
+    NSDictionary *watch = [YTJson findFirst:@"watchEndpoint" in:renderer limit:600];
+
+    return (NSTimeInterval)[YTJson intIn:watch key:@"startTimeSeconds"];
+}
+
 static BOOL YTRendererIsLive(id renderer, NSDictionary *badge) {
     if ([[YTJson textIn:badge key:@"style"] isEqualToString:@"LIVE"]) {
         return YES;
@@ -404,6 +418,7 @@ static BOOL YTRendererIsLive(id renderer, NSDictionary *badge) {
     }
 
     item.watchedShare = YTWatchedShareIn(tile);
+    item.resumeAt = YTResumeAtIn(tile);
 
     NSDictionary *browse = [YTJson findFirst:@"browseEndpoint" in:tile limit:400];
     NSString *browseId = [YTJson textIn:browse key:@"browseId"];
@@ -609,6 +624,7 @@ static BOOL YTRendererIsLive(id renderer, NSDictionary *badge) {
     }
 
     item.watchedShare = YTWatchedShareIn(renderer);
+    item.resumeAt = YTResumeAtIn(renderer);
 
     if (item.duration == nil) {
         item.duration = [YTJson renderedText:badge key:@"text"];

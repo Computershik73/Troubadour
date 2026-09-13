@@ -419,6 +419,13 @@ static UINavigationController *YTNavControllerRef = nil;
 + (void)openVideo:(NSString *)videoId
             title:(NSString *)title
          playlist:(NSString *)playlistId {
+    [self openVideo:videoId title:title playlist:playlistId resumeAt:0];
+}
+
++ (void)openVideo:(NSString *)videoId
+            title:(NSString *)title
+         playlist:(NSString *)playlistId
+         resumeAt:(NSTimeInterval)resumeAt {
     if ([videoId length] == 0) {
         return;
     }
@@ -433,6 +440,15 @@ static UINavigationController *YTNavControllerRef = nil;
     UIViewController *screen = [[player alloc] initWithVideoId:videoId
                                                           title:title
                                                        playlist:playlistId];
+
+    /**
+     * Секунду продолжения кладём через `setValue:forKey:`: заводить ради
+     * неё ещё один заход в плеер незачем, а класс здесь берётся по имени
+     * и напрямую его метод не позвать.
+     */
+    if (resumeAt > 0) {
+        [screen setValue:[NSNumber numberWithDouble:resumeAt] forKey:@"resumeAt"];
+    }
 
     [self push:screen];
 }
@@ -1076,146 +1092,21 @@ static UINavigationController *YTNavControllerRef = nil;
 
 NSString *const YTReleaseHeavyNotification = @"YTReleaseHeavy";
 
-@implementation YTWatchProgress
-
-static NSString *const YTProgressKey = @"YTWatchProgress";
-
 /**
- * Больше пятисот записей не держим.
+ * Список просмотренного, накопленный сборками 1.4-182 и 1.4-183, выбрасываем.
  *
- * Список лежит в настройках целиком, и читается он при каждом показе
- * карточки. Пятьсот роликов — это месяцы просмотра, а весит такой
- * список десятки килобайт; дальше выбрасываем самые старые.
+ * Он был подпоркой, пока я считал, что сервер долю просмотра TV-клиенту не
+ * присылает. Присылает — и точнее нашего: со всех устройств человека и с
+ * точной секундой продолжения. Держать рядом два расходящихся источника
+ * незачем, а осевшие в настройках десятки килобайт ни к чему.
  */
-static const NSUInteger YTProgressLimit = 500;
+__attribute__((constructor)) static void YTDropOldWatchProgress(void) {
+    NSUserDefaults *store = [NSUserDefaults standardUserDefaults];
 
-+ (NSMutableDictionary *)store {
-    static NSMutableDictionary *store = nil;
-    static dispatch_once_t once;
-
-    dispatch_once(&once, ^{
-        NSDictionary *saved = [[NSUserDefaults standardUserDefaults]
-            dictionaryForKey:YTProgressKey];
-
-        store = saved != nil
-            ? [NSMutableDictionary dictionaryWithDictionary:saved]
-            : [NSMutableDictionary dictionary];
-    });
-
-    return store;
-}
-
-+ (void)save {
-    NSMutableDictionary *store = [self store];
-
-    @synchronized (store) {
-        if ([store count] > YTProgressLimit) {
-            NSArray *keys = [store keysSortedByValueUsingComparator:
-                ^NSComparisonResult(NSDictionary *first, NSDictionary *second) {
-                    return [[first objectForKey:@"at"] compare:[second objectForKey:@"at"]];
-                }];
-
-            NSUInteger extra = [store count] - YTProgressLimit;
-
-            for (NSUInteger i = 0; i < extra && i < [keys count]; i++) {
-                [store removeObjectForKey:[keys objectAtIndex:i]];
-            }
-        }
-
-        [[NSUserDefaults standardUserDefaults] setObject:store forKey:YTProgressKey];
+    if ([store objectForKey:@"YTWatchProgress"] != nil) {
+        [store removeObjectForKey:@"YTWatchProgress"];
     }
 }
-
-+ (void)remember:(NSString *)videoId
-              at:(NSTimeInterval)position
-              of:(NSTimeInterval)duration {
-    /**
-     * Совсем короткие не запоминаем: полоска на них не поместится, а
-     * продолжать с середины двадцатисекундного ролика незачем.
-     */
-    if ([videoId length] == 0 || duration < 60.0 || position < 0) {
-        return;
-    }
-
-    NSMutableDictionary *store = [self store];
-
-    @synchronized (store) {
-        [store setObject:[NSDictionary dictionaryWithObjectsAndKeys:
-            [NSNumber numberWithDouble:position], @"pos",
-            [NSNumber numberWithDouble:duration], @"len",
-            [NSNumber numberWithDouble:[NSDate timeIntervalSinceReferenceDate]], @"at",
-            nil] forKey:videoId];
-    }
-
-    [self save];
-}
-
-+ (NSDictionary *)entryFor:(NSString *)videoId {
-    if ([videoId length] == 0) {
-        return nil;
-    }
-
-    NSMutableDictionary *store = [self store];
-
-    @synchronized (store) {
-        return [store objectForKey:videoId];
-    }
-}
-
-+ (double)shareFor:(NSString *)videoId {
-    NSDictionary *entry = [self entryFor:videoId];
-
-    if (entry == nil) {
-        return 0;
-    }
-
-    double length = [[entry objectForKey:@"len"] doubleValue];
-
-    if (!(length > 0)) {
-        return 0;
-    }
-
-    double share = [[entry objectForKey:@"pos"] doubleValue] / length;
-
-    return MAX(0.0, MIN(1.0, share));
-}
-
-+ (NSTimeInterval)resumeFor:(NSString *)videoId {
-    NSDictionary *entry = [self entryFor:videoId];
-
-    if (entry == nil) {
-        return 0;
-    }
-
-    double length = [[entry objectForKey:@"len"] doubleValue];
-    double position = [[entry objectForKey:@"pos"] doubleValue];
-
-    /**
-     * Досмотренный до конца начинаем сначала — так просил человек, и так
-     * делает оригинал: у доигравшего ролика продолжать нечего.
-     *
-     * «До конца» с запасом в пять процентов: у многих роликов последние
-     * секунды — заставка, и останавливаются на ней.
-     */
-    if (!(length > 0) || position >= length * 0.95) {
-        return 0;
-    }
-
-    // И у самого начала продолжать нечего.
-    return (position > 10.0) ? position : 0;
-}
-
-+ (void)forgetAll {
-    NSMutableDictionary *store = [self store];
-
-    @synchronized (store) {
-        [store removeAllObjects];
-    }
-
-    [[NSUserDefaults standardUserDefaults] removeObjectForKey:YTProgressKey];
-}
-
-@end
 
 @implementation YTShare
 

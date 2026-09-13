@@ -57,6 +57,12 @@
     /** Набор выбранной таблетки, если она листает ленту, а не поиск. */
     NSString *_categoryParams;
 
+    /** Свой раздел таблетки — `FEtopics_live` у эфиров. */
+    NSString *_categoryBrowse;
+
+    /** Полки с заголовками: у эфиров лента приходит ими. */
+    NSMutableArray *_groups;
+
     NSInteger _columns;
     CGFloat _laidOutWidth;
 
@@ -77,6 +83,7 @@
     }
 
     _rows = [NSMutableArray array];
+    _groups = [NSMutableArray array];
     _items = [NSMutableArray array];
     _chips = [NSMutableArray array];
     _pager = [[YTPager alloc] init];
@@ -316,16 +323,19 @@
      */
     NSString *query = nil;
     NSString *params = nil;
+    NSString *browse = nil;
 
     if (_selectedCategory > 0 && _selectedCategory < (NSInteger)[_categories count]) {
         NSDictionary *picked = [_categories objectAtIndex:_selectedCategory];
 
         query = [picked objectForKey:@"query"];
         params = [picked objectForKey:@"params"];
+        browse = [picked objectForKey:@"browse"];
     }
 
     // Набор запоминаем: продолжение спрашивается у того же источника.
     _categoryParams = [params copy];
+    _categoryBrowse = [browse copy];
 
     NSLog(@"[YouTube/Главная] Загрузка: %@",
           [query length] > 0 ? [NSString stringWithFormat:@"поиск «%@»", query]
@@ -335,8 +345,8 @@
     YTAsync(^{
         NSDictionary *feed = [query length] > 0
             ? [YTApi search:query continuation:nil]
-            : ([params length] > 0
-                ? [YTApi chipFeed:params continuation:nil]
+            : ([browse length] > 0
+                ? [YTApi liveFeed:nil]
                 : [YTApi homeFeedWithParams:nil continuation:nil]);
 
         YTMain(^{
@@ -440,6 +450,14 @@
             [_items removeAllObjects];
             [_items addObjectsFromArray:items];
 
+            [_groups removeAllObjects];
+
+            NSArray *shelves = [feed objectForKey:@"groups"];
+
+            if ([shelves count] > 0) {
+                [_groups addObjectsFromArray:shelves];
+            }
+
             [_pager setToken:[feed objectForKey:@"continuation"]];
 
             [self rebuildRows];
@@ -486,15 +504,15 @@
 
     // Продолжение спрашивается у того же источника, что и первая страница:
     // у выбранной таблетки это поиск, у «Всех» — рекомендации.
-    // У таблетки с набором продолжение листает ленту, а не поиск.
-    BOOL searching = (_selectedCategory > 0 && [_categoryParams length] == 0);
-    NSString *params = [_categoryParams copy];
+    // У таблетки со своим разделом продолжение листает его, а не поиск.
+    BOOL searching = (_selectedCategory > 0 && [_categoryBrowse length] == 0);
+    NSString *browse = [_categoryBrowse copy];
 
     YTAsync(^{
         NSDictionary *feed = searching
             ? [YTApi search:nil continuation:token]
-            : ([params length] > 0
-                ? [YTApi chipFeed:params continuation:token]
+            : ([browse length] > 0
+                ? [YTApi liveFeed:token]
                 : [YTApi homeFeedWithParams:nil continuation:token]);
 
         YTMain(^{
@@ -578,6 +596,35 @@
  */
 - (void)rebuildRows {
     [_rows removeAllObjects];
+
+    /**
+     * Лента с полками раскладывается по-другому: заголовок отдельной
+     * строкой, под ним ряды его плиток. Так приходит вкладка эфиров —
+     * «Recommended», «Live Now», «Recent Live Streams».
+     */
+    if ([_groups count] > 0) {
+        for (NSDictionary *group in _groups) {
+            NSString *title = [group objectForKey:@"title"];
+
+            if ([title length] > 0) {
+                [_rows addObject:[NSDictionary dictionaryWithObject:title
+                                                            forKey:@"shelf"]];
+            }
+
+            NSMutableArray *current = nil;
+
+            for (YTVideoItem *item in [group objectForKey:@"items"]) {
+                if (current == nil || [current count] >= (NSUInteger)_columns) {
+                    current = [NSMutableArray array];
+                    [_rows addObject:current];
+                }
+
+                [current addObject:item];
+            }
+        }
+
+        return;
+    }
 
     NSMutableArray *current = nil;
 
@@ -674,7 +721,14 @@
                                          columns:_columns];
     }
 
-    NSArray *row = [_rows objectAtIndex:[path row]];
+    id entry = [_rows objectAtIndex:[path row]];
+
+    // Заголовок полки: одна строка с полями, как у дней в «Истории».
+    if ([entry isKindOfClass:[NSDictionary class]]) {
+        return 44;
+    }
+
+    NSArray *row = (NSArray *)entry;
 
     if ([row count] == 0) {
         return 0;
@@ -765,6 +819,36 @@
         return cell;
     }
 
+    id entry = [_rows objectAtIndex:[path row]];
+
+    if ([entry isKindOfClass:[NSDictionary class]]) {
+        static NSString *shelfId = @"shelf";
+
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:shelfId];
+
+        if (cell == nil) {
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
+                                          reuseIdentifier:shelfId];
+
+            [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
+
+            UILabel *label = YTLabel(YTFontSemiBold(18), [YTTheme primaryText], 1);
+            [label setTag:1];
+            [[cell contentView] addSubview:label];
+        }
+
+        UILabel *label = (UILabel *)[[cell contentView] viewWithTag:1];
+
+        [cell setBackgroundColor:[YTTheme background]];
+        [[cell contentView] setBackgroundColor:[YTTheme background]];
+        [label setTextColor:[YTTheme primaryText]];
+        [label setText:[entry objectForKey:@"shelf"]];
+        [label setFrame:CGRectMake(YTFeedPadding, 12,
+                                   [self bounds].size.width - YTFeedPadding * 2, 24)];
+
+        return cell;
+    }
+
     static NSString *identifier = @"row";
 
     YTFeedRowCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
@@ -774,7 +858,7 @@
                                     reuseIdentifier:identifier];
     }
 
-    [cell bindRow:[_rows objectAtIndex:[path row]]
+    [cell bindRow:(NSArray *)entry
             width:[self bounds].size.width
           columns:_columns];
 

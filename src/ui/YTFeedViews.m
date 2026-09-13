@@ -177,7 +177,8 @@ static const CGFloat YTCardTextGap = 4;
         } else {
             [YTNav openVideo:card->_item.videoId
                        title:card->_item.title
-                    playlist:card->_item.playlistId];
+                    playlist:card->_item.playlistId
+                    resumeAt:card->_item.resumeAt];
         }
     }];
 
@@ -214,20 +215,16 @@ static const CGFloat YTCardTextGap = 4;
      * У эфиров и подборок просмотра нет — полоску не показываем.
      */
     /**
-     * Сперва слово сервера, потом своя запись.
+     * Долю просмотра берём только у сервера.
      *
-     * Сервер знает о просмотрах со всех устройств человека, а наша запись
-     * — только о здешних. Но приходит его доля не в каждой ленте: в
-     * поиске и у канала её нет, а история просмотра есть. Поэтому одно
-     * дополняет другое, а не заменяет.
+     * Своё хранилище было временной подпоркой, пока я считал, что
+     * TV-клиенту этого не присылают. Присылают — и в «Истории», и в
+     * «Подписках», и в рекомендациях. Сервер знает о просмотрах со всех
+     * устройств человека, а хранилище знало только о здешних и вдобавок
+     * расходилось с ним.
      */
-    if (item.isLive || [item.playlistId length] > 0) {
-        _watchedShare = 0;
-    } else if (item.watchedShare >= 0) {
-        _watchedShare = item.watchedShare;
-    } else {
-        _watchedShare = [YTWatchProgress shareFor:item.videoId];
-    }
+    _watchedShare = (item.isLive || [item.playlistId length] > 0)
+        ? 0 : MAX(0.0, item.watchedShare);
 
     [_watchedTrack setBackgroundColor:[UIColor colorWithWhite:1 alpha:0.28]];
     [_watchedFill setBackgroundColor:YTColor(0xFF0000)];

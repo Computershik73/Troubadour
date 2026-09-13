@@ -113,6 +113,13 @@ static const CGFloat YTPageMargin = 16;
                                      UIActionSheetDelegate, UIAlertViewDelegate>
 @end
 
+@interface YTPlayerViewController ()
+
+/** Секунда продолжения: ставится навигацией до показа. */
+@property (nonatomic, assign) NSTimeInterval resumeAt;
+
+@end
+
 @implementation YTPlayerViewController {
     NSString *_videoId;
     NSString *_titleText;
@@ -4346,7 +4353,7 @@ static NSMutableArray *YTJamItems = nil;
      * сначала: это решает само хранилище, возвращая ноль.
      */
     if (![[YTHlsProxy shared] isLive]) {
-        NSTimeInterval resume = [YTWatchProgress resumeFor:_videoId];
+        NSTimeInterval resume = _resumeAt;
 
         if (resume > 0) {
             NSLog(@"[YouTube/Плеер] Продолжаем с %.0f с — здесь бросили", resume);
@@ -5966,15 +5973,6 @@ static NSMutableArray *YTJamItems = nil;
 
     _watchSegmentFrom = at;
     _watchSegmentAt = now;
-
-    /**
-     * Заодно запоминаем место у себя: на карточке нужна полоска, а при
-     * следующем заходе — продолжение с того же места. Сервер этого не
-     * присылает, так что храним сами.
-     */
-    if (![[YTHlsProxy shared] isLive]) {
-        [YTWatchProgress remember:_videoId at:at of:_duration];
-    }
 
     YTAsync(^{
         [YTApi reportWatched:json position:at from:from elapsed:spent final:final];
