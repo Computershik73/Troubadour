@@ -23,6 +23,10 @@ static const CGFloat YTCardTextGap = 4;
 @implementation YTVideoCard {
     YTTappableView *_touch;
     YTRoundedImageView *_thumb;
+    UIView *_watchedTrack;
+    UIView *_watchedFill;
+    double _watchedShare;
+
     YTPillView *_durationPill;
     UILabel *_duration;
     YTRoundedImageView *_avatar;
@@ -101,6 +105,20 @@ static const CGFloat YTCardTextGap = 4;
      * на разных версиях iOS ведёт себя по-разному, и подписи не было
      * видно вовсе. Двумя видами надёжнее и ближе к оригиналу.
      */
+    /**
+     * Полоска просмотра по нижнему краю кадра.
+     *
+     * Кладётся до плашки длительности: та лежит в том же углу, и полоска
+     * не должна её перекрывать.
+     */
+    _watchedTrack = [[UIView alloc] initWithFrame:CGRectZero];
+    [_watchedTrack setUserInteractionEnabled:NO];
+    [_touch addSubview:_watchedTrack];
+
+    _watchedFill = [[UIView alloc] initWithFrame:CGRectZero];
+    [_watchedFill setUserInteractionEnabled:NO];
+    [_touch addSubview:_watchedFill];
+
     _durationPill = [[YTPillView alloc] initWithFrame:CGRectZero];
     [_durationPill setCornerRadius:4];
     [_durationPill setFillColor:[YTTheme badge]];
@@ -191,6 +209,19 @@ static const CGFloat YTCardTextGap = 4;
     [_title setText:item.title];
     [_meta setText:[item metadataLine]];
 
+    /**
+     * Докуда досмотрен: своя запись, сервер этого не присылает.
+     * У эфиров и подборок просмотра нет — полоску не показываем.
+     */
+    _watchedShare = (item.isLive || [item.playlistId length] > 0)
+        ? 0 : [YTWatchProgress shareFor:item.videoId];
+
+    [_watchedTrack setBackgroundColor:[UIColor colorWithWhite:1 alpha:0.28]];
+    [_watchedFill setBackgroundColor:YTColor(0xFF0000)];
+
+    [_watchedTrack setHidden:(_watchedShare <= 0)];
+    [_watchedFill setHidden:(_watchedShare <= 0)];
+
     // Плашка одинакова в обеих темах: она лежит поверх кадра, а не поверх
     // страницы, и её фон задан числом (#CC000000), а не кистью темы.
     [_durationPill setFillColor:[YTTheme badge]];
@@ -228,6 +259,20 @@ static const CGFloat YTCardTextGap = 4;
                                                    portrait:_item.isShort];
 
     [_thumb setFrame:CGRectMake(0, 0, width, thumbHeight)];
+
+    /**
+     * Полоска просмотра — по нижнему краю кадра, в четыре точки: так же,
+     * как в оригинале. Скруглению кадра она не мешает: у превью радиус
+     * небольшой, и полоска в него вписывается.
+     */
+    if (![_watchedTrack isHidden]) {
+        CGFloat bar = 4;
+        CGFloat top = thumbHeight - bar;
+
+        [_watchedTrack setFrame:CGRectMake(0, top, width, bar)];
+        [_watchedFill setFrame:CGRectMake(0, top,
+                                          (CGFloat)(width * _watchedShare), bar)];
+    }
 
     /**
      * Ширину превью называет сама карточка, и она же по этому числу просит

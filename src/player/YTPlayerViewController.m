@@ -4337,6 +4337,26 @@ static NSMutableArray *YTJamItems = nil;
      *
      * Ноль здесь недопустим: это не «обычная скорость», а пауза.
      */
+    /**
+     * Продолжаем с того места, где бросили.
+     *
+     * Только у обычных роликов: у эфира своя ось времени, а Shorts, по
+     * просьбе человека, всегда начинаются сначала — они идут своим
+     * разделом и сюда не попадают. Досмотренный до конца тоже начинается
+     * сначала: это решает само хранилище, возвращая ноль.
+     */
+    if (![[YTHlsProxy shared] isLive]) {
+        NSTimeInterval resume = [YTWatchProgress resumeFor:_videoId];
+
+        if (resume > 0) {
+            NSLog(@"[YouTube/Плеер] Продолжаем с %.0f с — здесь бросили", resume);
+
+            [_player seekToTime:CMTimeMakeWithSeconds(resume, 600)
+                toleranceBefore:CMTimeMakeWithSeconds(1.0, 600)
+                 toleranceAfter:CMTimeMakeWithSeconds(1.0, 600)];
+        }
+    }
+
     if (_rate > 0 && _rate != 1.0f) {
         [_player setRate:_rate];
     } else {
@@ -5946,6 +5966,15 @@ static NSMutableArray *YTJamItems = nil;
 
     _watchSegmentFrom = at;
     _watchSegmentAt = now;
+
+    /**
+     * Заодно запоминаем место у себя: на карточке нужна полоска, а при
+     * следующем заходе — продолжение с того же места. Сервер этого не
+     * присылает, так что храним сами.
+     */
+    if (![[YTHlsProxy shared] isLive]) {
+        [YTWatchProgress remember:_videoId at:at of:_duration];
+    }
 
     YTAsync(^{
         [YTApi reportWatched:json position:at from:from elapsed:spent final:final];

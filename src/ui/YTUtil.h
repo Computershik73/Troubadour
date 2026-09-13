@@ -267,6 +267,31 @@ CGFloat YTStatusBarHeight(void);
  * закрывались Shorts по кнопке «Поделиться». Здесь это в одном месте,
  * чтобы не разойтись снова.
  */
+/**
+ * Докуда досмотрен ролик.
+ *
+ * Своё, а не с сервера: в ответах ленты доли просмотра нет, а
+ * `thumbnailOverlayResumePlaybackRenderer` TV-клиенту не присылают.
+ * Храним в общих настройках: пара «место, длительность» на ролик.
+ */
+@interface YTWatchProgress : NSObject
+
+/** Запомнить место показа. Ролик короче минуты не запоминается. */
++ (void)remember:(NSString *)videoId
+              at:(NSTimeInterval)position
+              of:(NSTimeInterval)duration;
+
+/** С какой секунды продолжать; ноль — с начала. */
++ (NSTimeInterval)resumeFor:(NSString *)videoId;
+
+/** Доля просмотренного от 0 до 1; ноль — записи нет. */
++ (double)shareFor:(NSString *)videoId;
+
+/** Забыть всё — для настроек. */
++ (void)forgetAll;
+
+@end
+
 /** Память кончается: отдать всё, что можно взять заново. */
 extern NSString *const YTReleaseHeavyNotification;
 

@@ -1076,6 +1076,147 @@ static UINavigationController *YTNavControllerRef = nil;
 
 NSString *const YTReleaseHeavyNotification = @"YTReleaseHeavy";
 
+@implementation YTWatchProgress
+
+static NSString *const YTProgressKey = @"YTWatchProgress";
+
+/**
+ * Больше пятисот записей не держим.
+ *
+ * Список лежит в настройках целиком, и читается он при каждом показе
+ * карточки. Пятьсот роликов — это месяцы просмотра, а весит такой
+ * список десятки килобайт; дальше выбрасываем самые старые.
+ */
+static const NSUInteger YTProgressLimit = 500;
+
++ (NSMutableDictionary *)store {
+    static NSMutableDictionary *store = nil;
+    static dispatch_once_t once;
+
+    dispatch_once(&once, ^{
+        NSDictionary *saved = [[NSUserDefaults standardUserDefaults]
+            dictionaryForKey:YTProgressKey];
+
+        store = saved != nil
+            ? [NSMutableDictionary dictionaryWithDictionary:saved]
+            : [NSMutableDictionary dictionary];
+    });
+
+    return store;
+}
+
++ (void)save {
+    NSMutableDictionary *store = [self store];
+
+    @synchronized (store) {
+        if ([store count] > YTProgressLimit) {
+            NSArray *keys = [store keysSortedByValueUsingComparator:
+                ^NSComparisonResult(NSDictionary *first, NSDictionary *second) {
+                    return [[first objectForKey:@"at"] compare:[second objectForKey:@"at"]];
+                }];
+
+            NSUInteger extra = [store count] - YTProgressLimit;
+
+            for (NSUInteger i = 0; i < extra && i < [keys count]; i++) {
+                [store removeObjectForKey:[keys objectAtIndex:i]];
+            }
+        }
+
+        [[NSUserDefaults standardUserDefaults] setObject:store forKey:YTProgressKey];
+    }
+}
+
++ (void)remember:(NSString *)videoId
+              at:(NSTimeInterval)position
+              of:(NSTimeInterval)duration {
+    /**
+     * Совсем короткие не запоминаем: полоска на них не поместится, а
+     * продолжать с середины двадцатисекундного ролика незачем.
+     */
+    if ([videoId length] == 0 || duration < 60.0 || position < 0) {
+        return;
+    }
+
+    NSMutableDictionary *store = [self store];
+
+    @synchronized (store) {
+        [store setObject:[NSDictionary dictionaryWithObjectsAndKeys:
+            [NSNumber numberWithDouble:position], @"pos",
+            [NSNumber numberWithDouble:duration], @"len",
+            [NSNumber numberWithDouble:[NSDate timeIntervalSinceReferenceDate]], @"at",
+            nil] forKey:videoId];
+    }
+
+    [self save];
+}
+
++ (NSDictionary *)entryFor:(NSString *)videoId {
+    if ([videoId length] == 0) {
+        return nil;
+    }
+
+    NSMutableDictionary *store = [self store];
+
+    @synchronized (store) {
+        return [store objectForKey:videoId];
+    }
+}
+
++ (double)shareFor:(NSString *)videoId {
+    NSDictionary *entry = [self entryFor:videoId];
+
+    if (entry == nil) {
+        return 0;
+    }
+
+    double length = [[entry objectForKey:@"len"] doubleValue];
+
+    if (!(length > 0)) {
+        return 0;
+    }
+
+    double share = [[entry objectForKey:@"pos"] doubleValue] / length;
+
+    return MAX(0.0, MIN(1.0, share));
+}
+
++ (NSTimeInterval)resumeFor:(NSString *)videoId {
+    NSDictionary *entry = [self entryFor:videoId];
+
+    if (entry == nil) {
+        return 0;
+    }
+
+    double length = [[entry objectForKey:@"len"] doubleValue];
+    double position = [[entry objectForKey:@"pos"] doubleValue];
+
+    /**
+     * Досмотренный до конца начинаем сначала — так просил человек, и так
+     * делает оригинал: у доигравшего ролика продолжать нечего.
+     *
+     * «До конца» с запасом в пять процентов: у многих роликов последние
+     * секунды — заставка, и останавливаются на ней.
+     */
+    if (!(length > 0) || position >= length * 0.95) {
+        return 0;
+    }
+
+    // И у самого начала продолжать нечего.
+    return (position > 10.0) ? position : 0;
+}
+
++ (void)forgetAll {
+    NSMutableDictionary *store = [self store];
+
+    @synchronized (store) {
+        [store removeAllObjects];
+    }
+
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:YTProgressKey];
+}
+
+@end
+
 @implementation YTShare
 
 /** Поповер надо держать: отпущенный, он исчезает вместе с листом. */
