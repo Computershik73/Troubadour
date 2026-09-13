@@ -1062,8 +1062,10 @@ static NSInteger _renewFailures = 0;
         [sabr pinVideo:[self sabrFormatFrom:video] hard:YES];
     }
 
-    NSLog(@"[YouTube/Подача] В предпочтениях: видео %lu, звука %lu",
-          (unsigned long)[allVideo count], (unsigned long)[allAudio count]);
+    NSLog(@"[YouTube/Подача] В предпочтениях: видео %lu, звука %lu, "
+          @"кадров не выше %ld",
+          (unsigned long)[allVideo count], (unsigned long)[allAudio count],
+          (long)([self prefersThirtyFrames] ? 30 : 60));
 
     if (_sabrLiveStart > 0 && sabr.liveMode) {
         [sabr setLiveStartHint:_sabrLiveStart];

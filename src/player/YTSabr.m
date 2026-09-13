@@ -1198,12 +1198,29 @@ enum { YTLiveCushion = 120 };
      */
     NSInteger ceiling = MAX([YTStreams deviceMaxHeight], _wantedHeight);
 
+    /**
+     * Кадры в секунду — из настройки, а не число тридцать навсегда.
+     *
+     * Поле 11 здесь — потолок частоты, и стояло в нём жёсткое `30`:
+     * перенято из дампа, где браузер человека был прижат расширением
+     * к тридцати. Сервер этому верит буквально и шестидесятикадровую
+     * дорожку не присылает никогда — ни у записи, ни у эфира, сколько бы
+     * их ни было в перечне предпочтений. Тумблер «60 кадров» при этом
+     * отбирал дорожки у нас, но серверу о себе не говорил, и на подаче
+     * не значил ничего.
+     *
+     * У записи это было незаметно: не дав шестидесяти, сервер даёт
+     * тридцать того же качества. У эфира тридцатикадровой дорожки может
+     * не быть вовсе.
+     */
+    NSInteger frames = [YTStreams prefersThirtyFrames] ? 30 : 60;
+
     YTProtoWriter *videoCap = [YTProtoWriter writer];
     [videoCap putVarint:2 field:1];
     [videoCap putVarint:1 field:2];
     [videoCap putVarint:(uint64_t)ceiling field:3];
     [videoCap putVarint:(uint64_t)(ceiling * 16 / 9) field:4];
-    [videoCap putVarint:30 field:11];
+    [videoCap putVarint:(uint64_t)frames field:11];
     [videoCap putVarint:2684048 field:12];
     [videoCap putVarint:0 field:15];
 
