@@ -1063,6 +1063,18 @@ static NSInteger _renewFailures = 0;
     sabr.liveMode = [YTJson boolIn:about key:@"isLive"]
                  || [YTJson boolIn:about key:@"isLiveNow"];
 
+    /**
+     * Ориентация кадра — по выбранной дорожке.
+     *
+     * Заявление о возможностях называет высоту и ширину порознь, и у
+     * стоячего ролика их надо поменять местами. Смотрим не на ступень
+     * (она у нас считается по короткой стороне и одинакова для обеих
+     * ориентаций), а на сами числа дорожки.
+     */
+    sabr.portraitFrame = ([YTJson intIn:video key:@"width"] > 0 &&
+                          [YTJson intIn:video key:@"height"] >
+                          [YTJson intIn:video key:@"width"]);
+
     [sabr setAvailableVideo:allVideo audio:allAudio];
 
     /**

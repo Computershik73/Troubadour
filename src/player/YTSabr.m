@@ -267,6 +267,7 @@
 }
 
 @synthesize liveMode = _liveMode;
+@synthesize portraitFrame = _portraitFrame;
 @synthesize liveStartSeconds = _liveStartSeconds;
 /**
  * «Играю прямо сейчас» — такое время плеера шлёт сам TV-клиент.
@@ -1243,15 +1244,32 @@ enum { YTLiveCushion = 120 };
      * Пересчитываем от того же образца по точкам в секунду: 1280×720
      * при тридцати кадрах — это и есть 2 684 048.
      */
+    NSInteger longSide = ceiling * 16 / 9;
+
     double sample = 2684048.0
         / (1280.0 * 720.0 * 30.0)
-        * (double)ceiling * (double)(ceiling * 16 / 9) * (double)frames;
+        * (double)ceiling * (double)longSide * (double)frames;
 
+    /**
+     * Кадр бывает лежачий, а бывает стоячий.
+     *
+     * Поля 3 и 4 — высота и ширина **кадра**, а не «качество». У лежачего
+     * 1080p кадр 1920×1080, у стоячего — 1080×1920: ступень та же, а
+     * высота вдвое больше объявленной, и такую дорожку сервер нам
+     * не даёт. Оттого вертикальные трансляции и обрывались на 480p:
+     * 480×854 — последнее, что влезает в объявленные 1080 по высоте.
+     * При выборе 720p и 1080p человек получал всё те же 480p, а в
+     * журнале — ни единого отказа, потому что отказывать было нечему:
+     * мы сами объявили себя неспособными.
+     *
+     * Меняем местами по ориентации нынешнего ролика: длинная сторона
+     * туда, где она у него и стоит.
+     */
     YTProtoWriter *videoCap = [YTProtoWriter writer];
     [videoCap putVarint:2 field:1];
     [videoCap putVarint:1 field:2];
-    [videoCap putVarint:(uint64_t)ceiling field:3];
-    [videoCap putVarint:(uint64_t)(ceiling * 16 / 9) field:4];
+    [videoCap putVarint:(uint64_t)(_portraitFrame ? longSide : ceiling) field:3];
+    [videoCap putVarint:(uint64_t)(_portraitFrame ? ceiling : longSide) field:4];
     [videoCap putVarint:(uint64_t)frames field:11];
     [videoCap putVarint:(uint64_t)sample field:12];
     [videoCap putVarint:0 field:15];
@@ -1261,8 +1279,11 @@ enum { YTLiveCushion = 120 };
      * `_requestNumber` к этому мгновению уже увеличен, и условие
      * «нулевой запрос» не срабатывало никогда.
      */
-    NSString *said = [NSString stringWithFormat:@"%ldx%ld, %ld кадр/с, поле 12 = %.0f",
-                      (long)(ceiling * 16 / 9), (long)ceiling, (long)frames, sample];
+    NSString *said = [NSString stringWithFormat:@"%ldx%ld%@, %ld кадр/с, поле 12 = %.0f",
+                      (long)(_portraitFrame ? ceiling : longSide),
+                      (long)(_portraitFrame ? longSide : ceiling),
+                      _portraitFrame ? @" (кадр стоячий)" : @"",
+                      (long)frames, sample];
 
     if (![said isEqualToString:_capsSaid]) {
         _capsSaid = [said copy];

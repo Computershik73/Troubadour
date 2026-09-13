@@ -136,6 +136,15 @@
  */
 @property (nonatomic, assign) BOOL liveMode;
 
+/**
+ * Кадр стоячий — 1080×1920 вместо 1920×1080.
+ *
+ * В заявлении о возможностях высота и ширина стоят порознь, и для
+ * вертикального ролика их надо поменять местами: иначе мы просим
+ * дорожку, которая по объявленной высоте не проходит.
+ */
+@property (nonatomic, assign) BOOL portraitFrame;
+
 /** Время первого пришедшего куска — с него и начинается показ эфира. */
 @property (nonatomic, readonly) NSTimeInterval liveStartSeconds;
 
