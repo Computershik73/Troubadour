@@ -195,6 +195,27 @@ before-package::
 	@[ -f "$(THEOS_STAGING_DIR)/DEBIAN/control" ] && \
 		chmod 644 "$(THEOS_STAGING_DIR)/DEBIAN/control"; true
 
+# Настоящая версия сборки — в связку.
+#
+# В `Resources/Info.plist` лежит короткая «1.4»: номер сборки theos
+# дописывает сам, и до связки он не доходил. А приложению он нужен —
+# по нему оно решает, есть ли в источнике что-то свежее. Спрашивать
+# у `dpkg` оказалось нельзя: он помнит последний поставленный **пакет**,
+# а приложение нередко ставят из `.ipa`, и тогда его запись отстаёт
+# на сотню сборок.
+#
+# Берём номер из служебного `control`, который к этому шагу уже собран
+# со всеми добавками (`+debug` в том числе), и вписываем в строку под
+# ключом `CFBundleVersion`. `CFBundleShortVersionString` не трогаем:
+# он для человека и остаётся коротким.
+	@control="$(THEOS_STAGING_DIR)/DEBIAN/control"; \
+	 plist="$(THEOS_STAGING_DIR)/Applications/$(APPLICATION_NAME).app/Info.plist"; \
+	 version=`sed -n 's/^Version: //p' "$$control"`; \
+	 if [ -n "$$version" ] && [ -f "$$plist" ]; then \
+	   sed -i "/<key>CFBundleVersion<\/key>/{n;s|<string>.*</string>|<string>$$version</string>|;}" "$$plist"; \
+	   echo "версия в связке: $$version"; \
+	 fi
+
 # Payload/Troubadour.app в zip — то же дерево, что кладётся в .deb.
 #
 # Имя берётся у только что собранного пакета: рядом с

@@ -70,6 +70,22 @@ static NSString *const YTRepo = @"https://computershik73.github.io/repo/";
 }
 
 + (NSString *)installedVersion {
+    /**
+     * Сперва связка — она и есть то, что сейчас работает.
+     *
+     * `CFBundleVersion` вписывается при сборке пакета и несёт полный
+     * номер вида «1.4-207+debug». Спрашивать `dpkg` первым нельзя:
+     * он помнит последний поставленный **пакет**, а приложение нередко
+     * ставят из `.ipa` — тогда его запись отстаёт на сотню сборок,
+     * и обновление предлагается на версию старше нынешней.
+     */
+    NSString *own = [[[NSBundle mainBundle] infoDictionary]
+        objectForKey:@"CFBundleVersion"];
+
+    if ([own rangeOfString:@"-"].location != NSNotFound) {
+        return own;
+    }
+
     NSString *path = [self statusPath];
 
     NSString *text = (path != nil)
@@ -364,10 +380,28 @@ static NSComparisonResult YTCompareChunk(NSString *left, NSString *right) {
         stringByAppendingPathComponent:@"iconswitch"];
 }
 
+/**
+ * Помощник умеет поднять права — то есть стоит с битом setuid и принадлежит root.
+ *
+ * Бит этот переживает установку пакетом и не переживает установку
+ * из `.ipa`: там всё распаковывается от имени приложения. Поэтому
+ * проверяем не «файл на месте», а именно право: иначе человек, поставивший
+ * `.ipa`, получал от `dpkg` невнятное «нет прав root» вместо объяснения.
+ */
++ (BOOL)helperIsRoot {
+    struct stat where;
+
+    if (stat([[self helperPath] fileSystemRepresentation], &where) != 0) {
+        return NO;
+    }
+
+    return (where.st_mode & S_ISUID) != 0 && where.st_uid == 0;
+}
+
 + (BOOL)canInstall {
     NSFileManager *files = [NSFileManager defaultManager];
 
-    if (![files isExecutableFileAtPath:[self helperPath]]) {
+    if (![files isExecutableFileAtPath:[self helperPath]] || ![self helperIsRoot]) {
         return NO;
     }
 
