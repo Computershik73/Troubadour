@@ -333,6 +333,9 @@ extern NSString *const YTSabrLostNotification;
  */
 + (NSInteger)framesForHeight:(NSInteger)height;
 
+/** Кадры у названной дорожки: 298 — шестьдесят, 136 — тридцать. */
++ (NSInteger)framesForItag:(NSInteger)itag;
+
 /**
  * Ступени, которых при тридцати кадрах у ролика нет вовсе.
  *

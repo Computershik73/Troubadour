@@ -236,6 +236,9 @@
 
     /** Закреплённая дорожка, признак ручного выбора и след срыва. */
     YTSabrFormat *_pinnedVideo;
+
+    /** Что последний раз сказали о возможностях — чтобы не повторяться. */
+    NSString *_capsSaid;
     BOOL _hardPin;
     BOOL _trackChanged;
 
@@ -490,8 +493,11 @@ enum { YTLiveCushion = 120 };
     _toldFormats = NO;
     _hardPin = hard;
 
-    NSLog(@"[YouTube/Подача] Дорожка закреплена: itag %ld (%ldp), %@",
+    NSInteger frames = [YTStreams framesForItag:format.itag];
+
+    NSLog(@"[YouTube/Подача] Дорожка закреплена: itag %ld (%ldp%@), %@",
           (long)format.itag, (long)format.height,
+          frames > 0 ? [NSString stringWithFormat:@", %ld кадр/с", (long)frames] : @"",
           hard ? @"выбор человека — менять нельзя" : @"сама, до конца ролика");
 }
 
@@ -1244,9 +1250,18 @@ enum { YTLiveCushion = 120 };
     [videoCap putVarint:(uint64_t)sample field:12];
     [videoCap putVarint:0 field:15];
 
-    if (_requestNumber == 0) {
-        NSLog(@"[YouTube/Подача] Возможности: %ldx%ld, %ld кадр/с, поле 12 = %.0f",
-              (long)(ceiling * 16 / 9), (long)ceiling, (long)frames, sample);
+    /**
+     * Печатаем, когда меняется сказанное, а не по номеру запроса:
+     * `_requestNumber` к этому мгновению уже увеличен, и условие
+     * «нулевой запрос» не срабатывало никогда.
+     */
+    NSString *said = [NSString stringWithFormat:@"%ldx%ld, %ld кадр/с, поле 12 = %.0f",
+                      (long)(ceiling * 16 / 9), (long)ceiling, (long)frames, sample];
+
+    if (![said isEqualToString:_capsSaid]) {
+        _capsSaid = [said copy];
+
+        NSLog(@"[YouTube/Подача] Возможности: %@", said);
     }
 
     YTProtoWriter *audioCap = [YTProtoWriter writer];

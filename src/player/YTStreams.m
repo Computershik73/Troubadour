@@ -517,6 +517,9 @@ static BOOL _sabrExact = NO;
 /** Что было на выбор в последнем ответе — для меню. */
 /** Лестница качеств: ступень → кадры, и ступени, скрытые тумблером. */
 static NSMutableDictionary *_tierFrames;
+
+/** Кадры по номеру дорожки: 298 — это 720p60, а 136 — 720p30. */
+static NSMutableDictionary *_itagFrames;
 static NSArray *_sixtyOnlyTiers;
 
 static NSArray *_lastSabrHeights = nil;
@@ -930,6 +933,22 @@ static NSInteger _renewFailures = 0;
                 [_sabrTiers setObject:[NSNumber numberWithInteger:tier]
                                forKey:[NSNumber numberWithInteger:
                                           [YTJson intIn:format key:@"itag"]]];
+
+                /**
+                 * И частоту по номеру — ради журнала.
+                 *
+                 * По ступени её не узнать: у эфира 720p бывает и в
+                 * тридцати кадрах (136), и в шестидесяти (298), а в
+                 * записи о присланном куске лежит только номер.
+                 */
+                if (_itagFrames == nil) {
+                    _itagFrames = [NSMutableDictionary dictionary];
+                }
+
+                [_itagFrames setObject:[NSNumber numberWithInteger:
+                                           [YTJson intIn:format key:@"fps"]]
+                                forKey:[NSNumber numberWithInteger:
+                                           [YTJson intIn:format key:@"itag"]]];
             }
 
             /**
@@ -1862,6 +1881,13 @@ static NSInteger _renewFailures = 0;
 
     NSLog(@"[YouTube/Потоки] Лестница качеств: %@",
           [listed length] > 0 ? listed : @"пусто");
+}
+
++ (NSInteger)framesForItag:(NSInteger)itag {
+    @synchronized ([YTStreams class]) {
+        return [[_itagFrames objectForKey:
+            [NSNumber numberWithInteger:itag]] integerValue];
+    }
 }
 
 + (NSInteger)framesForHeight:(NSInteger)height {
