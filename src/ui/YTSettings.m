@@ -11,6 +11,8 @@ static NSString *const YTLanguageKey = @"YTLanguage";
 static NSString *const YTPreferredHeightKey = @"YTPreferredHeight";
 static NSString *const YTThumbnailWidthKey = @"YTThumbnailWidth";
 static NSString *const YTDeliveryKey = @"YTDelivery";
+static NSString *const YTDownloadAudioLangKey = @"YTDownloadAudioLanguage";
+static NSString *const YTPlaybackAudioLangKey = @"YTPlaybackAudioLanguage";
 static NSString *const YTShortsHeightKey = @"YTShortsHeight";
 static NSString *const YTChannelIconsKey = @"YTChannelIcons";
 static NSString *const YTAlternateIconKey = @"YTAlternateIcon";
@@ -299,6 +301,94 @@ static void YTNotifyChanged(void) {
     return YTLoc(@"Как у самого YouTube: поток идёт кусками по запросу. Все "
                  @"качества и звуковые дорожки; нужен вход. Если не задастся — "
                  @"приложение само перейдёт к готовым адресам");
+}
+
+#pragma mark Языковая дорожка
+
+/**
+ * По умолчанию — язык устройства, годится и автодубляж.
+ *
+ * Ноль в хранилище означает «не выбирали», а не «оригинал»: у пустого
+ * `NSUserDefaults` целое всегда ноль, и отличить одно от другого нельзя.
+ * Поэтому наружу значения сдвинуты на единицу — в хранилище лежит
+ * `mode + 1`, и ноль честно читается как «ничего не выбрано».
+ */
++ (YTAudioLanguage)audioLanguageForKey:(NSString *)key {
+    NSInteger stored = [[NSUserDefaults standardUserDefaults] integerForKey:key];
+
+    if (stored < 1 || stored > YTAudioLanguageAsk + 1) {
+        return YTAudioLanguageDeviceAny;
+    }
+
+    return (YTAudioLanguage)(stored - 1);
+}
+
++ (void)setAudioLanguage:(YTAudioLanguage)mode forKey:(NSString *)key {
+    [[NSUserDefaults standardUserDefaults] setInteger:(mode + 1) forKey:key];
+
+    YTNotifyChanged();
+}
+
++ (YTAudioLanguage)downloadAudioLanguage {
+    return [self audioLanguageForKey:YTDownloadAudioLangKey];
+}
+
++ (void)setDownloadAudioLanguage:(YTAudioLanguage)mode {
+    [self setAudioLanguage:mode forKey:YTDownloadAudioLangKey];
+}
+
++ (YTAudioLanguage)playbackAudioLanguage {
+    return [self audioLanguageForKey:YTPlaybackAudioLangKey];
+}
+
++ (void)setPlaybackAudioLanguage:(YTAudioLanguage)mode {
+    [self setAudioLanguage:mode forKey:YTPlaybackAudioLangKey];
+}
+
++ (NSArray *)audioLanguageOptions {
+    return [NSArray arrayWithObjects:
+        [NSNumber numberWithInteger:YTAudioLanguageOriginal],
+        [NSNumber numberWithInteger:YTAudioLanguageDeviceAuthored],
+        [NSNumber numberWithInteger:YTAudioLanguageDeviceAny],
+        [NSNumber numberWithInteger:YTAudioLanguageAsk],
+        nil];
+}
+
++ (NSString *)audioLanguageTitle:(YTAudioLanguage)mode {
+    switch (mode) {
+        case YTAudioLanguageOriginal:
+            return YTLoc(@"Оригинал");
+
+        case YTAudioLanguageDeviceAuthored:
+            return YTLoc(@"Язык устройства");
+
+        case YTAudioLanguageAsk:
+            return YTLoc(@"Спрашивать каждый раз");
+
+        default:
+            return YTLoc(@"Язык устройства, можно автодубляж");
+    }
+}
+
++ (NSString *)audioLanguageHint:(YTAudioLanguage)mode {
+    switch (mode) {
+        case YTAudioLanguageOriginal:
+            return YTLoc(@"Та дорожка, на которой ролик сняли");
+
+        case YTAudioLanguageDeviceAuthored:
+            return YTLoc(@"Озвучка на языке устройства, если её записал сам "
+                         @"автор. Синтезированный дубляж не берём; нет "
+                         @"авторской — играет оригинал");
+
+        case YTAudioLanguageAsk:
+            return YTLoc(@"Выбор дорожки при каждом ролике, у которого их "
+                         @"больше одной");
+
+        default:
+            return YTLoc(@"Любая дорожка на языке устройства, в том числе "
+                         @"автоматический дубляж. Нет ни одной — играет "
+                         @"оригинал");
+    }
 }
 
 #pragma mark Превью

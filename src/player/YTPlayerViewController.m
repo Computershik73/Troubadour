@@ -556,6 +556,9 @@ static const CGFloat YTPageMargin = 16;
     NSDictionary *_playerJson;
     NSString *_audioTrack;
 
+    /** Спрашивали ли про дорожку у этого ролика — один раз на показ. */
+    BOOL _askedAudioTrack;
+
     /**
      * Какая страница меню открыта: сама панель (0) либо список качеств,
      * скоростей, озвучек, субтитров.
@@ -2072,8 +2075,74 @@ static const CGFloat YTPageMargin = 16;
         return;
     }
 
+    /**
+     * «Спрашивать каждый раз» — значит спросить до первого байта.
+     *
+     * Дорожка вшивается в файл при склейке, и сменить её потом можно
+     * только перекачав всё заново; поэтому вопрос идёт здесь, а не после.
+     * Перечень дорожек стоит одного запроса, и лишь при этой настройке.
+     */
+    if ([YTSettings downloadAudioLanguage] == YTAudioLanguageAsk) {
+        [self askTrackThenDownload:height];
+
+        return;
+    }
+
+    [self beginDownload:height track:nil];
+}
+
+- (void)askTrackThenDownload:(NSInteger)height {
+    __weak YTPlayerViewController *weakSelf = self;
+
+    [YTDownloads askTracksFor:_videoId done:^(NSArray *tracks) {
+        YTPlayerViewController *me = weakSelf;
+
+        if (me == nil) {
+            return;
+        }
+
+        // Дорожка одна — вопрос был бы издевательством.
+        if ([tracks count] < 2) {
+            [me beginDownload:height track:nil];
+
+            return;
+        }
+
+        [me showTrackMenu:tracks height:height];
+    }];
+}
+
+- (void)showTrackMenu:(NSArray *)tracks height:(NSInteger)height {
+    NSMutableArray *rows = [NSMutableArray array];
+
+    __weak YTPlayerViewController *weakSelf = self;
+
+    for (NSDictionary *track in tracks) {
+        NSString *identifier = [track objectForKey:@"id"];
+
+        [rows addObject:[YTSheetRow choice:[track objectForKey:@"title"]
+                                    picked:[[track objectForKey:@"default"] boolValue]
+                                    action:^{
+            YTPlayerViewController *me = weakSelf;
+
+            [me->_downloadSheet close];
+            [me beginDownload:height track:identifier];
+        }]];
+    }
+
+    if (_downloadSheet == nil) {
+        _downloadSheet = [[YTSettingsSheet alloc] initWithDark:NO];
+    }
+
+    _downloadRowHeights = nil;
+
+    [_downloadSheet setTitle:YTLoc(@"Язык звука") rows:rows];
+    [_downloadSheet openIn:[self view]];
+}
+
+- (void)beginDownload:(NSInteger)height track:(NSString *)trackId {
     [YTDownloads start:_videoId title:[_title text]
-               details:_details item:nil height:height];
+               details:_details item:nil height:height audioTrack:trackId];
 
     [self updateDownloadButton];
 }
@@ -3087,7 +3156,10 @@ static const CGFloat YTPageMargin = 16;
          * было донести, и он ничего не менял.
          */
         YTFormat *audio = [YTStreams chooseAudio:formats
-                                  preferredTrack:_audioTrack];
+                                  preferredTrack:([_audioTrack length] > 0
+            ? _audioTrack
+            : [YTStreams trackIdForMode:[YTSettings playbackAudioLanguage]
+                              inFormats:formats])];
 
         // Что взяли на самом деле — это и покажет меню качества.
         _readyHeight = [video qualityTier];
@@ -3887,6 +3959,7 @@ static NSMutableArray *YTJamItems = nil;
     // Состояние прежнего ролика не должно пережить переход.
     _pickedHeight = 0;
     _sabrFellBack = NO;
+    _askedAudioTrack = NO;
     _rate = 1.0f;
     _duration = 0;
     _finished = NO;
@@ -4391,6 +4464,33 @@ static NSMutableArray *YTJamItems = nil;
 
     [self startStallWatch];
     [self showNowPlaying];
+
+    [self askAudioTrackIfAsked];
+}
+
+/**
+ * «Спрашивать каждый раз» — открываем список дорожек, когда их несколько.
+ *
+ * Вопрос задаётся после пуска, а не до: до пуска у нас ещё нет ответа
+ * `/player`, а значит и перечня дорожек, — пришлось бы задерживать показ
+ * ради лишнего запроса у каждого ролика, в том числе одноязычного.
+ * Выбранная дорожка подхватывается на ходу, тем же путём, что и выбор
+ * из меню вручную.
+ */
+- (void)askAudioTrackIfAsked {
+    if (_askedAudioTrack
+        || [YTSettings playbackAudioLanguage] != YTAudioLanguageAsk) {
+        return;
+    }
+
+    if ([[self audioTracks] count] < 2) {
+        return;
+    }
+
+    _askedAudioTrack = YES;
+
+    [self openMenuPage:3];
+    [_menu openIn:[self view]];
 }
 
 /**

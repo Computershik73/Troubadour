@@ -28,6 +28,33 @@ typedef enum {
 } YTDelivery;
 
 /**
+ * Какую звуковую дорожку брать у ролика с несколькими языками.
+ *
+ * У YouTube их сегодня три вида: родная (`acont=original`) — та, на
+ * которой ролик сняли; озвучка, записанная автором или его командой
+ * (`acont=dubbed`); и автоматический дубляж (`acont=dubbed-auto`) —
+ * синтезированный голос поверх родного. Сервер помечает «основной»
+ * (`audioIsDefault`) не родную, а ту, что подходит языку запроса, —
+ * полагаться на эту пометку нельзя.
+ *
+ * `YTAudioLanguageOriginal` — всегда родная.
+ *
+ * `YTAudioLanguageDeviceAuthored` — на языке устройства, но только если
+ *     её записали люди; синтезированную не берём. Нет такой — родная.
+ *
+ * `YTAudioLanguageDeviceAny` — на языке устройства любая, включая
+ *     автоматический дубляж. Нет и его — родная.
+ *
+ * `YTAudioLanguageAsk` — спрашивать каждый раз, когда дорожек больше одной.
+ */
+typedef enum {
+    YTAudioLanguageOriginal = 0,
+    YTAudioLanguageDeviceAuthored = 1,
+    YTAudioLanguageDeviceAny = 2,
+    YTAudioLanguageAsk = 3
+} YTAudioLanguage;
+
+/**
  * Настройки приложения — порт `Settings.xaml` и его хранилища.
  *
  * В UWP-версии всё это лежит в `ApplicationData.Current.LocalSettings`,
@@ -129,6 +156,20 @@ typedef enum {
 
 /** Строка под названием — чем этот путь отличается от другого. */
 + (NSString *)deliveryHint:(YTDelivery)delivery;
+
+#pragma mark Языковая дорожка
+
+/** Какую дорожку брать при скачивании. */
++ (YTAudioLanguage)downloadAudioLanguage;
++ (void)setDownloadAudioLanguage:(YTAudioLanguage)mode;
+
+/** Какую дорожку включать при просмотре. */
++ (YTAudioLanguage)playbackAudioLanguage;
++ (void)setPlaybackAudioLanguage:(YTAudioLanguage)mode;
+
++ (NSArray *)audioLanguageOptions;
++ (NSString *)audioLanguageTitle:(YTAudioLanguage)mode;
++ (NSString *)audioLanguageHint:(YTAudioLanguage)mode;
 
 #pragma mark Переключатели
 

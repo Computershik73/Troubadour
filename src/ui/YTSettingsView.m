@@ -68,6 +68,7 @@ static const CGFloat YTSheetOption = 42;
 - (void)setToggleOn:(BOOL)on;
 
 - (CGFloat)preferredHeight;
+- (CGFloat)preferredHeightForWidth:(CGFloat)width;
 - (void)applyTheme;
 
 @end
@@ -104,10 +105,20 @@ static const CGFloat YTSheetOption = 42;
     _label = YTLabel(YTFontRegular(16), [YTTheme primaryText], 1);
     [self addSubview:_label];
 
-    _hint = YTLabel(YTFontRegular(12), [YTTheme secondaryText], 1);
+    /**
+     * Пояснение больше не обрезается.
+     *
+     * Прежде оно было в одну строку и ровно там, где важнее всего,
+     * кончалось многоточием: у «Способа воспроизведения» из трёх строк
+     * читалась одна. Теперь строк сколько нужно, а высота строки
+     * считается по тексту.
+     */
+    _hint = YTLabel(YTFontRegular(12), [YTTheme secondaryText], 0);
     [self addSubview:_hint];
 
-    _value = YTLabel(YTFontRegular(13), [YTTheme secondaryText], 1);
+    // Значение тоже в две строки: «Язык устройства, можно автодубляж»
+    // в одну не помещается ни на одном телефоне.
+    _value = YTLabel(YTFontRegular(13), [YTTheme secondaryText], 2);
     [_value setTextAlignment:NSTextAlignmentRight];
     [self addSubview:_value];
 
@@ -138,7 +149,66 @@ static const CGFloat YTSheetOption = 42;
 }
 
 - (CGFloat)preferredHeight {
-    return [self hasHint] ? YTSetToggleRow : YTSetRow;
+    return [self preferredHeightForWidth:[self bounds].size.width];
+}
+
+/**
+ * Высота — по тексту, а не по одной из двух заготовок.
+ *
+ * Ширину приходится передавать: раскладка страницы знает её раньше,
+ * чем строка получает свой прямоугольник, а без ширины перенос
+ * не посчитать.
+ */
+- (CGFloat)preferredHeightForWidth:(CGFloat)width {
+    if (![self hasHint]) {
+        return YTSetRow;
+    }
+
+    CGFloat text = [self textWidthFor:width];
+
+    if (text <= 0) {
+        return YTSetToggleRow;
+    }
+
+    CGFloat label = YTTextHeight([_label text], [_label font], text, 1);
+    CGFloat hint = YTTextHeight([_hint text], [_hint font], text, 0);
+
+    return MAX(YTSetToggleRow, label + 2 + hint + 20);
+}
+
+/**
+ * Сколько места остаётся подписи: то же вычитание, что и в раскладке.
+ *
+ * Считается дважды — при измерении и при расстановке, — и разойтись
+ * им нельзя: разошлись бы, и высота не совпала бы с тем, что нарисовано.
+ */
+- (CGFloat)textWidthFor:(CGFloat)width {
+    CGFloat textLeft = YTSetSide + YTSetIcon + YTSetSide;
+    CGFloat right = width - YTSetSide;
+
+    if (_showsToggle) {
+        right = right - YTSetTrackWidth - 12;
+    } else if ([self hasValue]) {
+        right = right - YTSetChevron - 6 - [self valueWidthFor:width] - 8;
+    }
+
+    return MAX((CGFloat)0, right - textLeft);
+}
+
+/**
+ * Ширина колонки значения.
+ *
+ * В разметке у неё `MaxWidth="110"`, и для «720p» этого довольно.
+ * Для «Спрашивать каждый раз» — нет, поэтому потолок поднят до трети
+ * ширины строки: значение переносится на вторую строку, а подпись
+ * слева всё ещё остаётся читаемой.
+ */
+- (CGFloat)valueWidthFor:(CGFloat)width {
+    CGFloat textLeft = YTSetSide + YTSetIcon + YTSetSide;
+    CGFloat right = width - YTSetSide;
+    CGFloat room = (right - YTSetChevron - 6) - textLeft - 8;
+
+    return MAX((CGFloat)0, MIN(MAX((CGFloat)110, floor(width / 3)), room));
 }
 
 - (void)setIconName:(NSString *)name {
@@ -227,11 +297,11 @@ static const CGFloat YTSheetOption = 42;
         [_chevron setFrame:CGRectMake(right - YTSetChevron, middle - YTSetChevron / 2,
                                       YTSetChevron, YTSetChevron)];
 
-        // `MaxWidth="110"` у значения и `Margin="6,0,0,0"` у стрелки.
-        CGFloat valueWidth = MIN((CGFloat)110, (right - YTSetChevron - 6) - textLeft - 8);
+        CGFloat valueWidth = [self valueWidthFor:box.size.width];
+        CGFloat valueHeight = YTTextHeight([_value text], [_value font], valueWidth, 2);
 
         [_value setFrame:CGRectMake(right - YTSetChevron - 6 - valueWidth,
-                                    middle - 10, valueWidth, 20)];
+                                    middle - valueHeight / 2, valueWidth, valueHeight)];
 
         right = right - YTSetChevron - 6 - valueWidth - 8;
     }
@@ -240,8 +310,12 @@ static const CGFloat YTSheetOption = 42;
 
     if ([self hasHint]) {
         // Подпись и пояснение — стопкой по центру, отступ между ними 2.
-        [_label setFrame:CGRectMake(textLeft, middle - 19, width, 20)];
-        [_hint setFrame:CGRectMake(textLeft, middle + 3, width, 16)];
+        CGFloat label = YTTextHeight([_label text], [_label font], width, 1);
+        CGFloat hint = YTTextHeight([_hint text], [_hint font], width, 0);
+        CGFloat top = middle - (label + 2 + hint) / 2;
+
+        [_label setFrame:CGRectMake(textLeft, top, width, label)];
+        [_hint setFrame:CGRectMake(textLeft, top + label + 2, width, hint)];
     } else {
         [_label setFrame:CGRectMake(textLeft, middle - 11, width, 22)];
         [_hint setFrame:CGRectZero];
@@ -267,6 +341,14 @@ static const CGFloat YTSheetOption = 42;
           selected:(NSInteger)selected
             picked:(void (^)(NSInteger index))picked;
 
+/** То же, но под каждым вариантом — строка пояснения. */
+- (void)showInView:(UIView *)host
+             title:(NSString *)title
+           options:(NSArray *)titles
+             hints:(NSArray *)hints
+          selected:(NSInteger)selected
+            picked:(void (^)(NSInteger index))picked;
+
 @end
 
 @implementation YTChoiceSheet {
@@ -286,6 +368,10 @@ static const CGFloat YTSheetOption = 42;
     UIScrollView *_list;
 
     NSMutableArray *_rows;
+
+    /** Высота каждой строки: с пояснением она своя у каждой. */
+    NSMutableArray *_rowHeights;
+
     void (^_picked)(NSInteger index);
     CGFloat _panelHeight;
 
@@ -302,6 +388,7 @@ static const CGFloat YTSheetOption = 42;
     }
 
     _rows = [NSMutableArray array];
+    _rowHeights = [NSMutableArray array];
 
     _backdrop = [[UIView alloc] initWithFrame:CGRectZero];
     [_backdrop setBackgroundColor:[UIColor colorWithWhite:0 alpha:0.4]];
@@ -392,6 +479,16 @@ static const CGFloat YTSheetOption = 42;
            options:(NSArray *)titles
           selected:(NSInteger)selected
             picked:(void (^)(NSInteger index))picked {
+    [self showInView:host title:title options:titles hints:nil
+            selected:selected picked:picked];
+}
+
+- (void)showInView:(UIView *)host
+             title:(NSString *)title
+           options:(NSArray *)titles
+             hints:(NSArray *)hints
+          selected:(NSInteger)selected
+            picked:(void (^)(NSInteger index))picked {
     _picked = [picked copy];
 
     [_panel setBackgroundColor:[YTTheme divider]];
@@ -403,16 +500,45 @@ static const CGFloat YTSheetOption = 42;
     }
 
     [_rows removeAllObjects];
+    [_rowHeights removeAllObjects];
+
+    // Ширина строки известна заранее: лист прижат к краям с полем.
+    CGFloat rowWidth = [host bounds].size.width - YTSheetSide * 2 - 32 - 30;
 
     for (NSUInteger i = 0; i < [titles count]; i++) {
         YTTappableView *row = [[YTTappableView alloc] initWithFrame:CGRectZero];
 
         [row setHighlights:YES];
 
-        UILabel *text = YTLabel(YTFontRegular(14), [YTTheme primaryText], 1);
+        UILabel *text = YTLabel(YTFontRegular(14), [YTTheme primaryText], 0);
 
         [text setText:[titles objectAtIndex:i]];
         [row addSubview:text];
+
+        /**
+         * Пояснение под вариантом — там, где оно и нужно.
+         *
+         * Выбирать «Язык устройства» и «Язык устройства, можно
+         * автодубляж» по одним названиям пришлось бы наугад: разница
+         * между ними в одном слове, и слово это не в названии.
+         */
+        NSString *hint = ([hints count] > i) ? [hints objectAtIndex:i] : nil;
+
+        UILabel *note = nil;
+
+        if ([hint length] > 0) {
+            note = YTLabel(YTFontRegular(12), [YTTheme secondaryText], 0);
+
+            [note setText:hint];
+            [row addSubview:note];
+        }
+
+        CGFloat titleHeight = YTTextHeight([text text], [text font], rowWidth, 0);
+        CGFloat noteHeight = (note != nil)
+            ? YTTextHeight(hint, [note font], rowWidth, 0) : 0;
+
+        [_rowHeights addObject:[NSNumber numberWithFloat:
+            MAX(YTSheetOption, titleHeight + (noteHeight > 0 ? noteHeight + 2 : 0) + 16)]];
 
         // `FontIcon Glyph=""` — галочка; в наборе Roboto ей
         // соответствует обычный знак ✓ того же размера 18.
@@ -422,6 +548,7 @@ static const CGFloat YTSheetOption = 42;
         [check setTextAlignment:NSTextAlignmentRight];
         [check setHidden:(NSInteger)i != selected];
         [row addSubview:check];
+
 
         __weak YTChoiceSheet *weakSelf = self;
         NSInteger index = (NSInteger)i;
@@ -452,7 +579,13 @@ static const CGFloat YTSheetOption = 42;
      * сверху: языков восемь десятков, и лист во весь экран был бы
      * не листом, а страницей.
      */
-    CGFloat content = YTSheetGrip + 20 + 12 + [_rows count] * (YTSheetOption + 2) + 16;
+    CGFloat stack = 0;
+
+    for (NSNumber *height in _rowHeights) {
+        stack += [height floatValue] + 2;
+    }
+
+    CGFloat content = YTSheetGrip + 20 + 12 + stack + 16;
     CGFloat limit = [host bounds].size.height * 0.7;
 
     _panelHeight = MIN(content, limit);
@@ -515,19 +648,48 @@ static const CGFloat YTSheetOption = 42;
     // Список занимает всё, что осталось под заголовком, и прокручивается.
     [_list setFrame:CGRectMake(0, top, width, MAX((CGFloat)0, _panelHeight - top - 16))];
 
-    [_list setContentSize:CGSizeMake(width, [_rows count] * (YTSheetOption + 2))];
+    CGFloat stack = 0;
+
+    for (NSNumber *height in _rowHeights) {
+        stack += [height floatValue] + 2;
+    }
+
+    [_list setContentSize:CGSizeMake(width, stack)];
+
+    CGFloat placed = 0;
+    CGFloat textWidth = width - 32 - 30;
 
     for (NSUInteger i = 0; i < [_rows count]; i++) {
         UIView *row = [_rows objectAtIndex:i];
+        CGFloat height = ([_rowHeights count] > i)
+            ? [[_rowHeights objectAtIndex:i] floatValue] : YTSheetOption;
 
-        [row setFrame:CGRectMake(16, i * (YTSheetOption + 2),
-                                 width - 32, YTSheetOption)];
+        [row setFrame:CGRectMake(16, placed, width - 32, height)];
+
+        placed += height + 2;
 
         NSArray *parts = [row subviews];
 
         if ([parts count] == 2) {
-            [[parts objectAtIndex:0] setFrame:CGRectMake(0, 0, width - 32 - 30, YTSheetOption)];
-            [[parts objectAtIndex:1] setFrame:CGRectMake(width - 32 - 24, 0, 24, YTSheetOption)];
+            [[parts objectAtIndex:0] setFrame:CGRectMake(0, 0, textWidth, height)];
+            [[parts objectAtIndex:1] setFrame:CGRectMake(width - 32 - 24, 0, 24, height)];
+
+            continue;
+        }
+
+        if ([parts count] == 3) {
+            UILabel *text = [parts objectAtIndex:0];
+            UILabel *note = [parts objectAtIndex:1];
+
+            CGFloat titleHeight = YTTextHeight([text text], [text font], textWidth, 0);
+            CGFloat noteHeight = YTTextHeight([note text], [note font], textWidth, 0);
+            CGFloat inset = (height - titleHeight - 2 - noteHeight) / 2;
+
+            [text setFrame:CGRectMake(0, inset, textWidth, titleHeight)];
+            [note setFrame:CGRectMake(0, inset + titleHeight + 2, textWidth, noteHeight)];
+
+            [[parts objectAtIndex:2] setFrame:
+                CGRectMake(width - 32 - 24, 0, 24, height)];
         }
     }
 }
@@ -559,6 +721,8 @@ static const CGFloat YTSheetOption = 42;
     YTSettingsRow *_appIcon;
     YTSettingsRow *_quality;
     YTSettingsRow *_delivery;
+    YTSettingsRow *_playbackAudio;
+    YTSettingsRow *_downloadAudio;
     YTSettingsRow *_thumbnails;
     YTSettingsRow *_sixtyFrames;
     YTSettingsRow *_channelIcons;
@@ -759,6 +923,26 @@ static const CGFloat YTSheetOption = 42;
         [weakSelf pickDelivery];
     }];
 
+    /**
+     * Язык звука — две строки, и это не удвоение ради симметрии.
+     *
+     * Смотрят и скачивают по-разному: дома, на своём языке, ролик можно
+     * слушать в дубляже, а сохранить хочется тот голос, который останется
+     * с файлом навсегда. Поэтому настройки две, и по умолчанию обе
+     * берут язык устройства.
+     */
+    _playbackAudio = [self rowWithIcon:@"languages"
+                                 label:YTLoc(@"Язык звука при просмотре")
+                                action:^{
+        [weakSelf pickPlaybackAudio];
+    }];
+
+    _downloadAudio = [self rowWithIcon:@"languages"
+                                 label:YTLoc(@"Язык звука при скачивании")
+                                action:^{
+        [weakSelf pickDownloadAudio];
+    }];
+
     _thumbnails = [self rowWithIcon:@"pl_quality" label:YTLoc(@"Качество превью") action:^{
         [weakSelf pickThumbnails];
     }];
@@ -917,6 +1101,16 @@ static const CGFloat YTSheetOption = 42;
     // Подсказка меняется вместе с выбором: разница между путями
     // не та вещь, которую стоит угадывать по названию.
     [_delivery setHintText:[YTSettings deliveryHint:[YTSettings delivery]]];
+
+    [_playbackAudio setValueText:
+        [YTSettings audioLanguageTitle:[YTSettings playbackAudioLanguage]]];
+    [_playbackAudio setHintText:
+        [YTSettings audioLanguageHint:[YTSettings playbackAudioLanguage]]];
+
+    [_downloadAudio setValueText:
+        [YTSettings audioLanguageTitle:[YTSettings downloadAudioLanguage]]];
+    [_downloadAudio setHintText:
+        [YTSettings audioLanguageHint:[YTSettings downloadAudioLanguage]]];
     [_thumbnails setValueText:[YTSettings thumbnailTitle:[YTSettings thumbnailWidth]]];
 
     [_sixtyFrames setToggleOn:[YTSettings allowsSixtyFrames]];
@@ -1120,6 +1314,56 @@ static const CGFloat YTSheetOption = 42;
 }
 
 /**
+ * Выбор языковой дорожки — общий для обеих строк.
+ *
+ * Пояснения идут в самом списке: разница между «языком устройства»
+ * и «языком устройства, можно автодубляж» ровно в одном — берём ли мы
+ * синтезированный голос, — и по названиям её не увидеть.
+ */
+- (void)pickAudioLanguage:(BOOL)forDownload {
+    NSArray *modes = [YTSettings audioLanguageOptions];
+
+    NSMutableArray *titles = [NSMutableArray array];
+    NSMutableArray *hints = [NSMutableArray array];
+
+    for (NSNumber *mode in modes) {
+        [titles addObject:[YTSettings audioLanguageTitle:[mode integerValue]]];
+        [hints addObject:[YTSettings audioLanguageHint:[mode integerValue]]];
+    }
+
+    YTAudioLanguage now = forDownload
+        ? [YTSettings downloadAudioLanguage] : [YTSettings playbackAudioLanguage];
+
+    NSUInteger found = [modes indexOfObject:[NSNumber numberWithInteger:now]];
+
+    [[self sheet] showInView:[self view]
+                       title:forDownload ? YTLoc(@"Язык звука при скачивании")
+                                         : YTLoc(@"Язык звука при просмотре")
+                     options:titles
+                       hints:hints
+                    selected:(found == NSNotFound ? 0 : (NSInteger)found)
+                      picked:^(NSInteger index) {
+        YTAudioLanguage mode = [[modes objectAtIndex:index] integerValue];
+
+        if (forDownload) {
+            [YTSettings setDownloadAudioLanguage:mode];
+        } else {
+            [YTSettings setPlaybackAudioLanguage:mode];
+        }
+
+        [self refresh];
+    }];
+}
+
+- (void)pickPlaybackAudio {
+    [self pickAudioLanguage:NO];
+}
+
+- (void)pickDownloadAudio {
+    [self pickAudioLanguage:YES];
+}
+
+/**
  * Выбор пути. Подсказка про каждый — прямо в списке: без неё выбирать
  * пришлось бы наугад, а разница между путями не в громкости и не в цвете.
  */
@@ -1225,7 +1469,7 @@ static const CGFloat YTSheetOption = 42;
             continue;
         }
 
-        CGFloat height = [row preferredHeight];
+        CGFloat height = [row preferredHeightForWidth:width];
 
         [row setFrame:CGRectMake(0, y, width, height)];
 

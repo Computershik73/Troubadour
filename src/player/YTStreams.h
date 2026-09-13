@@ -66,6 +66,12 @@ extern NSString *const YTSabrLostNotification;
 /** Родная, но с поджатой громкостью: `drc=1`. */
 @property (nonatomic, assign) BOOL audioIsCompressed;
 
+/** Синтезированный дубляж (`acont=dubbed-auto`), а не запись человека. */
+@property (nonatomic, assign) BOOL audioIsAutoDubbed;
+
+/** Язык дорожки двумя буквами: «ru», «en». Пусто у ролика без озвучек. */
+@property (nonatomic, copy) NSString *audioLanguage;
+
 /**
  * Ступень качества — «1080p».
  *
@@ -91,6 +97,9 @@ extern NSString *const YTSabrLostNotification;
  * а расшифровать его нам нечем.
  */
 + (NSArray *)formatsFrom:(NSDictionary *)playerResponse;
+
+/** Те же дорожки, но как их прислал сервер: с `audioTrack` и `xtags`. */
++ (NSArray *)rawFormatsIn:(NSDictionary *)playerResponse;
 
 /**
  * Готовый склеенный поток из `formats` — видео и звук в одном файле.
@@ -196,6 +205,11 @@ extern NSString *const YTSabrLostNotification;
 + (YTSabr *)detachedSabrFor:(NSDictionary *)playerResponse
                   maxHeight:(NSInteger)maxHeight;
 
+/** То же, но с названной звуковой дорожкой: у загрузки своя настройка. */
++ (YTSabr *)detachedSabrFor:(NSDictionary *)playerResponse
+                  maxHeight:(NSInteger)maxHeight
+                 audioTrack:(NSString *)trackId;
+
 /**
  * Ступени качества, что были в последнем ответе с подачей.
  *
@@ -251,6 +265,21 @@ extern NSString *const YTSabrLostNotification;
  * Пустой массив — выбирать не из чего.
  */
 + (NSArray *)audioTracksIn:(NSArray *)formats;
+
+/**
+ * Какую дорожку брать по выбранному в настройках правилу.
+ *
+ * Возвращает `id` дорожки или `nil`, если правило ни на чём
+ * не остановилось: у ролика одна дорожка, нужного языка нет вовсе, или
+ * человек просил оригинал. Пустой ответ означает «решай как прежде» —
+ * дальше работает обычный отбор, который и так предпочитает родную.
+ *
+ * Две разновидности потому, что разбор до дорожек доходит дважды:
+ * подача SABR смотрит сырые `adaptiveFormats`, а загрузчик и склейка —
+ * уже разобранные `YTFormat`.
+ */
++ (NSString *)trackIdForMode:(NSInteger)mode in:(NSArray *)rawFormats;
++ (NSString *)trackIdForMode:(NSInteger)mode inFormats:(NSArray *)formats;
 
 
 /**

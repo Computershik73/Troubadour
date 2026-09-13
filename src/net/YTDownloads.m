@@ -7,6 +7,7 @@
 #import "YTMp4Writer.h"
 #import "YTStrings.h"
 #import "YTVideoItem.h"
+#import "YTSettings.h"
 
 NSString *const YTDownloadsChangedNotification = @"YTDownloadsChanged";
 
@@ -188,6 +189,7 @@ static dispatch_semaphore_t YTDownloadGate = NULL;
             item.thumbnailUrl = [row objectForKey:@"thumbnailUrl"];
             item.totalBytes = [[row objectForKey:@"totalBytes"] longLongValue];
             item.height = [[row objectForKey:@"height"] integerValue];
+            item.audioTrack = [row objectForKey:@"audioTrack"];
             item.complete = [[row objectForKey:@"complete"] boolValue];
             item.addedAt = [[row objectForKey:@"addedAt"] doubleValue];
 
@@ -269,6 +271,7 @@ static dispatch_semaphore_t YTDownloadGate = NULL;
                     forKey:@"totalBytes"];
             [row setObject:[NSNumber numberWithInteger:item.height]
                     forKey:@"height"];
+            [row setObject:item.audioTrack ?: @"" forKey:@"audioTrack"];
             [row setObject:[NSNumber numberWithBool:item.complete]
                     forKey:@"complete"];
             [row setObject:[NSNumber numberWithDouble:item.addedAt]
@@ -543,6 +546,78 @@ static dispatch_semaphore_t YTDownloadGate = NULL;
       details:(NSDictionary *)details
          item:(id)videoItem
        height:(NSInteger)height {
+    [self start:videoId title:title details:details item:videoItem
+         height:height audioTrack:nil];
+}
+
+/**
+ * Какие дорожки предложить на выбор.
+ *
+ * Спрашивается тем же клиентом, что и сама загрузка, — по той же
+ * причине, что и качества: показать можно только то, что потом выйдет
+ * забрать.
+ */
++ (void)askTracksFor:(NSString *)videoId
+                done:(void (^)(NSArray *tracks))done {
+    if ([videoId length] == 0 || done == nil) {
+        return;
+    }
+
+    [self ensureQueue];
+
+    dispatch_async(YTDownloadQueue, ^{
+        NSDictionary *player = [YTApi androidVrPlayerResponse:videoId];
+        NSArray *formats = [YTStreams formatsFrom:player];
+
+        if ([formats count] == 0) {
+            player = [YTApi playerResponse:videoId];
+            formats = [YTStreams formatsFrom:player];
+        }
+
+        NSArray *tracks = [YTStreams audioTracksIn:formats];
+
+        /**
+         * Отмечаем ту, что взяли бы сами, — по настройке скачивания.
+         *
+         * `audioTracksIn:` метит родную, и для показа это верно, а здесь
+         * галочка должна стоять там, куда попадёт нажатие «просто
+         * скачать».
+         */
+        NSString *wanted = [YTStreams trackIdForMode:[YTSettings downloadAudioLanguage]
+                                           inFormats:formats];
+
+        if ([wanted length] > 0) {
+            NSMutableArray *marked = [NSMutableArray array];
+
+            for (NSDictionary *track in tracks) {
+                NSMutableDictionary *copy =
+                    [NSMutableDictionary dictionaryWithDictionary:track];
+
+                [copy setObject:[NSNumber numberWithBool:
+                    [[track objectForKey:@"id"] isEqualToString:wanted]]
+                         forKey:@"default"];
+
+                [marked addObject:copy];
+            }
+
+            tracks = marked;
+        }
+
+        NSLog(@"[YouTube/Скачано] У %@ звуковых дорожек: %lu", videoId,
+              (unsigned long)[tracks count]);
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            done(tracks);
+        });
+    });
+}
+
++ (void)start:(NSString *)videoId
+        title:(NSString *)title
+      details:(NSDictionary *)details
+         item:(id)videoItem
+       height:(NSInteger)height
+   audioTrack:(NSString *)trackId {
     if ([videoId length] == 0) {
         return;
     }
@@ -594,6 +669,7 @@ static dispatch_semaphore_t YTDownloadGate = NULL;
 
         item.videoId = videoId;
         item.height = height;
+        item.audioTrack = trackId;
         item.addedAt = [[NSDate date] timeIntervalSince1970];
 
         @synchronized ([YTDownloads class]) {
@@ -1051,7 +1127,25 @@ static const long long YTFetchChunk = 8 * 1024 * 1024;
     NSArray *formats = [YTStreams formatsFrom:player];
 
     YTFormat *video = [self videoNear:item.height in:formats];
-    YTFormat *audio = [YTStreams chooseAudio:formats preferredTrack:nil];
+    /**
+     * Дорожка языка — по настройке скачивания, а не по настройке показа.
+     *
+     * Прежде здесь стоял `nil`, и выбор доставался запасному ходу:
+     * «родная, а нет её — та, что сервер зовёт основной». Основной же
+     * сервер зовёт ту, что подходит языку запроса, — оттого у людей
+     * и оказывались скачанными ролики с чужой озвучкой.
+     */
+    NSString *track = [item.audioTrack length] > 0 ? item.audioTrack
+        : [YTStreams trackIdForMode:[YTSettings downloadAudioLanguage]
+                          inFormats:formats];
+
+    YTFormat *audio = [YTStreams chooseAudio:formats preferredTrack:track];
+
+    if (audio != nil && [audio.audioTrackName length] > 0) {
+        NSLog(@"[YouTube/Скачано] %@: дорожка «%@»%@", item.videoId,
+              audio.audioTrackName,
+              [item.audioTrack length] > 0 ? @" (выбрана вручную)" : @"");
+    }
 
     if (video == nil) {
         NSLog(@"[YouTube/Скачано] У %@ нет раздельных дорожек", item.videoId);
@@ -1195,7 +1289,22 @@ static const long long YTFetchChunk = 8 * 1024 * 1024;
 + (BOOL)runSabr:(YTDownloadItem *)item
             key:(NSString *)key
          player:(NSDictionary *)player {
-    YTSabr *sabr = [YTStreams detachedSabrFor:player maxHeight:item.height];
+    /**
+     * Дорожку называем сами: внутри подача спросила бы настройку показа,
+     * а у скачивания она своя.
+     */
+    NSString *track = [item.audioTrack length] > 0 ? item.audioTrack
+        : [YTStreams trackIdForMode:[YTSettings downloadAudioLanguage]
+                                 in:[YTStreams rawFormatsIn:player]];
+
+    if ([track length] > 0) {
+        NSLog(@"[YouTube/Скачано] %@: дорожка %@%@", item.videoId, track,
+              [item.audioTrack length] > 0 ? @" (выбрана вручную)" : @"");
+    }
+
+    YTSabr *sabr = [YTStreams detachedSabrFor:player
+                                    maxHeight:item.height
+                                   audioTrack:track];
 
     if (sabr == nil || [[sabr videoInit] length] == 0) {
         NSLog(@"[YouTube/Скачано] %@: подача не поднялась — забирать нечем",

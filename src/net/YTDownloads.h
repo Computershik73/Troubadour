@@ -36,6 +36,16 @@ extern NSString *const YTDownloadsChangedNotification;
  */
 @property (nonatomic, assign) NSInteger height;
 
+/**
+ * Выбранная человеком звуковая дорожка — `id` вида «ru.4».
+ *
+ * Пусто означает «не выбирал»: тогда дорожку подбирает настройка
+ * «Язык звука при скачивании». Хранится в записи, а не берётся заново,
+ * потому что докачка продолжает начатое — сменить дорожку посередине
+ * значило бы склеить два разных голоса в один файл.
+ */
+@property (nonatomic, copy) NSString *audioTrack;
+
 @property (nonatomic, assign) BOOL complete;
 
 /** Идёт ли сейчас сборка из дорожек — тогда проценты не про загрузку. */
@@ -132,6 +142,24 @@ extern NSString *const YTDownloadsChangedNotification;
       details:(NSDictionary *)details
          item:(id)videoItem
        height:(NSInteger)height;
+
+/** То же, но с названной звуковой дорожкой; пусто — по настройке. */
++ (void)start:(NSString *)videoId
+        title:(NSString *)title
+      details:(NSDictionary *)details
+         item:(id)videoItem
+       height:(NSInteger)height
+   audioTrack:(NSString *)trackId;
+
+/**
+ * Какие звуковые дорожки есть у ролика.
+ *
+ * `done` зовётся на главном потоке; в каждом словаре `id`, `title`
+ * и `default` — та, которую взяли бы без выбора. Пустой массив значит,
+ * что выбирать не из чего: дорожка одна.
+ */
++ (void)askTracksFor:(NSString *)videoId
+                done:(void (^)(NSArray *tracks))done;
 
 /**
  * Что можно предложить на выбор: массив чисел-высот.

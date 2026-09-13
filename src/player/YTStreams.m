@@ -215,6 +215,222 @@ static NSInteger YTCanonicalTier(NSInteger raw) {
 }
 
 /**
+ * Синтезированный дубляж — голос машины поверх родного.
+ *
+ * Пометка `acont=dubbed-auto`; у озвучки, записанной людьми, стоит
+ * просто `dubbed`. Разница для слуха велика, и человек вправе сказать
+ * «чужой язык — да, робота — нет».
+ *
+ * Запасной ход по названию: сервер переводит его на язык запроса, и
+ * «(автоматический дубляж)» по-русски рядом с «(auto-dubbed)»
+ * по-английски — обе строки несут одно слово, по которому и смотрим.
+ */
++ (BOOL)isAutoDubbedTrack:(NSDictionary *)format {
+    NSString *marks = [self marksIn:format];
+
+    if ([marks rangeOfString:@"dubbed-auto"].location != NSNotFound) {
+        return YES;
+    }
+
+    if ([marks rangeOfString:@"acont"].location != NSNotFound) {
+        return NO;
+    }
+
+    NSString *name = [self audioTrackField:format key:@"displayName"];
+
+    return [name rangeOfString:@"auto" options:NSCaseInsensitiveSearch].location != NSNotFound
+        || [name rangeOfString:@"автомат" options:NSCaseInsensitiveSearch].location != NSNotFound;
+}
+
+/**
+ * Язык дорожки двумя буквами.
+ *
+ * Берётся из `id` — он выглядит как «ru.4» или «en-US.4», где до точки
+ * стоит код языка. Запасной ход — пометка `lang=` в `xtags`.
+ */
++ (NSString *)languageOfTrack:(NSDictionary *)format {
+    NSString *identifier = [self audioTrackField:format key:@"id"];
+    NSRange dot = [identifier rangeOfString:@"."];
+
+    NSString *code = (dot.location != NSNotFound)
+        ? [identifier substringToIndex:dot.location] : @"";
+
+    if ([code length] == 0) {
+        NSString *marks = [self marksIn:format];
+        NSRange at = [marks rangeOfString:@"lang="];
+
+        if (at.location == NSNotFound) {
+            return @"";
+        }
+
+        NSUInteger from = at.location + at.length;
+        NSUInteger to = from;
+
+        while (to < [marks length]) {
+            unichar letter = [marks characterAtIndex:to];
+
+            BOOL alpha = (letter >= 'a' && letter <= 'z')
+                      || (letter >= 'A' && letter <= 'Z');
+
+            if (!alpha && letter != '-') {
+                break;
+            }
+
+            to++;
+        }
+
+        code = [marks substringWithRange:NSMakeRange(from, to - from)];
+    }
+
+    return [self shortLanguage:code];
+}
+
+/** «en-US» → «en»: сравнивать языки надо по первой части. */
++ (NSString *)shortLanguage:(NSString *)code {
+    NSRange dash = [code rangeOfString:@"-"];
+
+    if (dash.location != NSNotFound) {
+        code = [code substringToIndex:dash.location];
+    }
+
+    return [code lowercaseString];
+}
+
+/**
+ * Дорожки, сведённые к тому, что нужно для выбора языка.
+ *
+ * Сам выбор ниже один на оба разбора; здесь только приведение
+ * к общему виду.
+ */
++ (NSArray *)trackFactsIn:(NSArray *)rawFormats {
+    NSMutableArray *facts = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+
+    for (NSDictionary *format in rawFormats) {
+        if (![format isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
+
+        NSString *identifier = [self audioTrackField:format key:@"id"];
+
+        if ([identifier length] == 0 || [seen containsObject:identifier]) {
+            continue;
+        }
+
+        [seen addObject:identifier];
+
+        [facts addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+            identifier, @"id",
+            [self languageOfTrack:format], @"lang",
+            [NSNumber numberWithBool:[self isOriginalTrack:format]], @"original",
+            [NSNumber numberWithBool:[self isAutoDubbedTrack:format]], @"auto",
+            [NSNumber numberWithBool:[self isCompressedTrack:format]], @"drc",
+            nil]];
+    }
+
+    return facts;
+}
+
++ (NSArray *)trackFactsInFormats:(NSArray *)formats {
+    NSMutableArray *facts = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+
+    for (YTFormat *format in formats) {
+        NSString *identifier = format.audioTrackId;
+
+        if ([identifier length] == 0 || [seen containsObject:identifier]) {
+            continue;
+        }
+
+        [seen addObject:identifier];
+
+        [facts addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+            identifier, @"id",
+            format.audioLanguage ?: @"", @"lang",
+            [NSNumber numberWithBool:format.audioIsOriginal], @"original",
+            [NSNumber numberWithBool:format.audioIsAutoDubbed], @"auto",
+            [NSNumber numberWithBool:format.audioIsCompressed], @"drc",
+            nil]];
+    }
+
+    return facts;
+}
+
+/**
+ * Само правило: по порядку предпочтений.
+ *
+ * Родная на нужном языке лучше озвучки на нём же — у ролика, снятого
+ * по-русски, русская «озвучка» была бы переводом с перевода.
+ */
++ (NSString *)pickTrackForMode:(NSInteger)mode among:(NSArray *)facts {
+    // Дорожка одна — выбирать не из чего, и называть её незачем.
+    if ([facts count] < 2) {
+        return nil;
+    }
+
+    NSString *want = [self shortLanguage:[YTApi hl]];
+
+    BOOL byDevice = (mode == YTAudioLanguageDeviceAuthored
+                  || mode == YTAudioLanguageDeviceAny);
+
+    for (NSUInteger pass = 0; byDevice && [want length] > 0 && pass < 3; pass++) {
+        // Третий заход — автодубляж, и только если его разрешили.
+        if (pass == 2 && mode != YTAudioLanguageDeviceAny) {
+            break;
+        }
+
+        for (NSDictionary *track in facts) {
+            if (![want isEqualToString:[track objectForKey:@"lang"]]) {
+                continue;
+            }
+
+            if ([[track objectForKey:@"drc"] boolValue]) {
+                continue;
+            }
+
+            BOOL original = [[track objectForKey:@"original"] boolValue];
+            BOOL automatic = [[track objectForKey:@"auto"] boolValue];
+
+            BOOL fits = (pass == 0) ? original
+                      : (pass == 1) ? !automatic : YES;
+
+            if (fits) {
+                return [track objectForKey:@"id"];
+            }
+        }
+    }
+
+    /**
+     * Ни правило, ни язык не сошлись — значит родная.
+     *
+     * Называем её прямо, а не оставляем пустоту: пустота уводит в общий
+     * запасной ход, а он у подачи и у склейки разный. Одно правило —
+     * один ответ.
+     */
+    for (NSDictionary *track in facts) {
+        if ([[track objectForKey:@"original"] boolValue]
+            && ![[track objectForKey:@"drc"] boolValue]) {
+            return [track objectForKey:@"id"];
+        }
+    }
+
+    return nil;
+}
+
++ (NSArray *)rawFormatsIn:(NSDictionary *)playerResponse {
+    return [YTJson arrayIn:[YTJson objectIn:playerResponse key:@"streamingData"]
+                       key:@"adaptiveFormats"];
+}
+
++ (NSString *)trackIdForMode:(NSInteger)mode in:(NSArray *)rawFormats {
+    return [self pickTrackForMode:mode among:[self trackFactsIn:rawFormats]];
+}
+
++ (NSString *)trackIdForMode:(NSInteger)mode inFormats:(NSArray *)formats {
+    return [self pickTrackForMode:mode among:[self trackFactsInFormats:formats]];
+}
+
+/**
  * Дорожка с поджатой громкостью (`drc=1`).
  *
  * Она тоже родная, но звук в ней прижат к середине — тише громкое,
@@ -662,6 +878,21 @@ static NSInteger _renewFailures = 0;
     BOOL nativeVoice = [self hasOriginalTrackIn:
         [YTJson arrayIn:streaming key:@"adaptiveFormats"]];
 
+    /**
+     * Язык дорожки — по правилу из настроек, и оно главнее запасных ходов.
+     *
+     * Пусто в ответе означает «правило ни на чём не остановилось»:
+     * человек просил оригинал, нужного языка у ролика нет или дорожка
+     * вообще одна. Тогда всё идёт как прежде.
+     */
+    NSString *byLanguage = ([_sabrTrack length] > 0) ? _sabrTrack
+        : [self trackIdForMode:[YTSettings playbackAudioLanguage]
+                            in:[YTJson arrayIn:streaming key:@"adaptiveFormats"]];
+
+    if ([byLanguage length] > 0 && [_sabrTrack length] == 0) {
+        NSLog(@"[YouTube/Подача] Язык звука по настройке: дорожка %@", byLanguage);
+    }
+
     for (NSDictionary *format in [YTJson arrayIn:streaming key:@"adaptiveFormats"]) {
         NSString *mime = [YTJson textIn:format key:@"mimeType"];
 
@@ -716,9 +947,10 @@ static NSInteger _renewFailures = 0;
                      * Отмечаем ту, что зазвучит сама, — иначе в списке
                      * галочка у одной дорожки, а слышно другую.
                      */
-                    [NSNumber numberWithBool:(nativeVoice
-                        ? [self isOriginalTrack:format]
-                        : [self isDefaultTrack:format])], @"default",
+                    [NSNumber numberWithBool:([byLanguage length] > 0
+                        ? [identifier isEqualToString:byLanguage]
+                        : (nativeVoice ? [self isOriginalTrack:format]
+                                       : [self isDefaultTrack:format]))], @"default",
                     nil]];
             }
 
@@ -736,8 +968,8 @@ static NSInteger _renewFailures = 0;
              */
             BOOL wanted;
 
-            if ([_sabrTrack length] > 0) {
-                wanted = [identifier isEqualToString:_sabrTrack];
+            if ([byLanguage length] > 0) {
+                wanted = [identifier isEqualToString:byLanguage];
             } else if (nativeVoice) {
                 wanted = [self isOriginalTrack:format]
                       && ![self isCompressedTrack:format];
@@ -925,6 +1157,12 @@ static NSInteger _renewFailures = 0;
  */
 + (YTSabr *)detachedSabrFor:(NSDictionary *)playerResponse
                   maxHeight:(NSInteger)maxHeight {
+    return [self detachedSabrFor:playerResponse maxHeight:maxHeight audioTrack:nil];
+}
+
++ (YTSabr *)detachedSabrFor:(NSDictionary *)playerResponse
+                  maxHeight:(NSInteger)maxHeight
+                 audioTrack:(NSString *)trackId {
     @synchronized ([YTStreams class]) {
         YTSabr *keepSabr = _lastSabr;
         NSArray *keepHeights = _lastSabrHeights;
@@ -936,7 +1174,7 @@ static NSInteger _renewFailures = 0;
 
         YTSabr *fresh = [self sabrFor:playerResponse
                             maxHeight:maxHeight
-                           audioTrack:nil
+                           audioTrack:trackId
                                 exact:YES];
 
         _lastSabr = keepSabr;
@@ -975,7 +1213,17 @@ static NSInteger _renewFailures = 0;
     NSMutableArray *tracks = [NSMutableArray array];
     NSMutableSet *seen = [NSMutableSet set];
 
-    /** Отмечаем ту, что зазвучит сама: родную, если она названа. */
+    /**
+     * Отмечаем ту, что зазвучит сама.
+     *
+     * Не «родную» безусловно, как было: какую дорожку включит плеер,
+     * решает настройка языка, и галочка должна стоять там же. Иначе
+     * в списке отмечена одна дорожка, а слышно другую — ровно та
+     * путаница, из-за которой этот список и завели.
+     */
+    NSString *wanted = [self trackIdForMode:[YTSettings playbackAudioLanguage]
+                                  inFormats:formats];
+
     BOOL nativeVoice = NO;
 
     for (YTFormat *format in formats) {
@@ -1007,8 +1255,10 @@ static NSInteger _renewFailures = 0;
         [tracks addObject:[NSDictionary dictionaryWithObjectsAndKeys:
             identifier, @"id",
             format.audioTrackName ?: identifier, @"title",
-            [NSNumber numberWithBool:(nativeVoice
-                ? format.audioIsOriginal : format.audioIsDefault)], @"default",
+            [NSNumber numberWithBool:([wanted length] > 0
+                ? [identifier isEqualToString:wanted]
+                : (nativeVoice ? format.audioIsOriginal
+                               : format.audioIsDefault))], @"default",
             nil]];
     }
 
@@ -1184,6 +1434,8 @@ static NSInteger _renewFailures = 0;
                                           key:@"audioIsDefault"];
         entry.audioIsOriginal = [self isOriginalTrack:format];
         entry.audioIsCompressed = [self isCompressedTrack:format];
+        entry.audioIsAutoDubbed = [self isAutoDubbedTrack:format];
+        entry.audioLanguage = [self languageOfTrack:format];
 
         [result addObject:entry];
     }
