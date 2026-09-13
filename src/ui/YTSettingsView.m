@@ -869,6 +869,26 @@ static const CGFloat YTSheetOption = 42;
 
     [_language setHintText:YTLoc(@"Названия роликов и подписи из ответов")];
 
+    /**
+     * Язык звука — две строки, и это не удвоение ради симметрии.
+     *
+     * Смотрят и скачивают по-разному: дома, на своём языке, ролик можно
+     * слушать в дубляже, а сохранить хочется тот голос, который останется
+     * с файлом навсегда. Поэтому настройки две, и по умолчанию обе
+     * берут язык устройства.
+     */
+    _playbackAudio = [self rowWithIcon:@"languages"
+                                 label:YTLoc(@"Язык звука при просмотре")
+                                action:^{
+        [weakSelf pickPlaybackAudio];
+    }];
+
+    _downloadAudio = [self rowWithIcon:@"languages"
+                                 label:YTLoc(@"Язык звука при скачивании")
+                                action:^{
+        [weakSelf pickDownloadAudio];
+    }];
+
     /** Оформление. */
     [self sectionTitled:YTLoc(@"Оформление")];
 
@@ -921,26 +941,6 @@ static const CGFloat YTSheetOption = 42;
     _delivery = [self rowWithIcon:@"pl_quality" label:YTLoc(@"Способ воспроизведения")
                            action:^{
         [weakSelf pickDelivery];
-    }];
-
-    /**
-     * Язык звука — две строки, и это не удвоение ради симметрии.
-     *
-     * Смотрят и скачивают по-разному: дома, на своём языке, ролик можно
-     * слушать в дубляже, а сохранить хочется тот голос, который останется
-     * с файлом навсегда. Поэтому настройки две, и по умолчанию обе
-     * берут язык устройства.
-     */
-    _playbackAudio = [self rowWithIcon:@"languages"
-                                 label:YTLoc(@"Язык звука при просмотре")
-                                action:^{
-        [weakSelf pickPlaybackAudio];
-    }];
-
-    _downloadAudio = [self rowWithIcon:@"languages"
-                                 label:YTLoc(@"Язык звука при скачивании")
-                                action:^{
-        [weakSelf pickDownloadAudio];
     }];
 
     _thumbnails = [self rowWithIcon:@"pl_quality" label:YTLoc(@"Качество превью") action:^{

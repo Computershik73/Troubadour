@@ -506,6 +506,24 @@ static BOOL YTFindPath(const uint8_t *bytes, NSUInteger length,
 
 #pragma mark Фрагмент
 
+/**
+ * Разбирает кусок целиком — сколько бы `moof` в нём ни лежало.
+ *
+ * У эфиров с низкой задержкой один кусок подачи несёт не одну пару
+ * `moof`+`mdat`, а полтора десятка подряд: сервер режет двухсекундный
+ * сегмент на доли и шлёт их одним ответом. Прежде здесь искался первый
+ * `moof` и разбирался один `trun` — остальное отбрасывалось молча.
+ *
+ * Наружу это выглядело так: в журнале фрагмент 77 КБ, а отданный плееру
+ * сегмент — 5 КБ, ровно размер первого `mdat`. На экране — пара кадров
+ * и тишина на минуты, потому что каждые две секунды показа приносили
+ * одну десятую секунды картинки.
+ *
+ * Сэмплы всех пар складываются в один перечень. Смещение у каждого
+ * по-прежнему считается от `dataOffset` первой пары, так что заголовки
+ * промежуточных `moof` просто попадают в пропуск между сэмплами —
+ * тем, кто читает `dataOffset + offset`, менять ничего не нужно.
+ */
 + (YTFragment *)parseFragment:(NSData *)data init:(YTTrackInit *)init {
     if ([data length] < 8) {
         return nil;
@@ -514,23 +532,74 @@ static BOOL YTFindPath(const uint8_t *bytes, NSUInteger length,
     const uint8_t *bytes = [data bytes];
     NSUInteger length = [data length];
 
-    NSUInteger moofOffset = 0;
-    NSUInteger moofSize = 0;
+    YTFragment *fragment = [[YTFragment alloc] init];
+    NSMutableArray *samples = [NSMutableArray array];
 
-    if (!YTFindBox(bytes, length, "moof", &moofOffset, &moofSize)) {
+    BOOL anchored = NO;
+    NSUInteger cursor = 0;
+
+    while (cursor + 8 <= length) {
+        uint32_t raw = YTRead32(bytes + cursor);
+        NSUInteger header = 8;
+        uint64_t boxSize = raw;
+
+        if (raw == 1) {
+            if (cursor + 16 > length) {
+                break;
+            }
+
+            boxSize = YTRead64(bytes + cursor + 8);
+            header = 16;
+        } else if (raw == 0) {
+            boxSize = length - cursor;
+        }
+
+        if (boxSize < header || cursor + boxSize > length) {
+            break;
+        }
+
+        if (memcmp(bytes + cursor + 4, "moof", 4) == 0) {
+            [self readMoof:bytes + cursor + header
+                      size:(NSUInteger)(boxSize - header)
+                     start:cursor
+                  fragment:fragment
+                   samples:samples
+                  anchored:&anchored];
+        }
+
+        cursor += (NSUInteger)boxSize;
+    }
+
+    if (!anchored) {
         return nil;
     }
 
+    fragment.samples = samples;
+
+    return fragment;
+}
+
+/**
+ * Одна пара: `moof` со своими значениями по умолчанию и своим `trun`.
+ *
+ * `start` — смещение самого бокса от начала куска. Именно от него,
+ * а не от `mdat`, отсчитывается `data_offset`; у второй и следующих пар
+ * это и есть всё отличие.
+ */
++ (void)readMoof:(const uint8_t *)moof
+            size:(NSUInteger)moofSize
+           start:(NSUInteger)start
+        fragment:(YTFragment *)fragment
+         samples:(NSMutableArray *)samples
+        anchored:(BOOL *)anchored {
     NSUInteger trafOffset = 0;
     NSUInteger trafSize = 0;
 
-    if (!YTFindBox(bytes + moofOffset, moofSize, "traf", &trafOffset, &trafSize)) {
-        return nil;
+    if (!YTFindBox(moof, moofSize, "traf", &trafOffset, &trafSize)) {
+        return;
     }
 
-    const uint8_t *traf = bytes + moofOffset + trafOffset;
-
-    YTFragment *fragment = [[YTFragment alloc] init];
+    const uint8_t *traf = moof + trafOffset;
 
     // Значения по умолчанию из tfhd — ими `trun` вправе не повторяться.
     uint32_t defaultDuration = 0;
@@ -568,7 +637,11 @@ static BOOL YTFindPath(const uint8_t *bytes, NSUInteger length,
     NSUInteger tfdtOffset = 0;
     NSUInteger tfdtSize = 0;
 
-    if (YTFindBox(traf, trafSize, "tfdt", &tfdtOffset, &tfdtSize)) {
+    /**
+     * Время берём у первой пары: у остальных оно своё, но идёт подряд,
+     * а читающие считают его сложением длительностей от начала куска.
+     */
+    if (!*anchored && YTFindBox(traf, trafSize, "tfdt", &tfdtOffset, &tfdtSize)) {
         const uint8_t *tfdt = traf + tfdtOffset;
 
         if (tfdt[0] == 1 && tfdtSize >= 12) {
@@ -582,13 +655,13 @@ static BOOL YTFindPath(const uint8_t *bytes, NSUInteger length,
     NSUInteger trunSize = 0;
 
     if (!YTFindBox(traf, trafSize, "trun", &trunOffset, &trunSize)) {
-        return nil;
+        return;
     }
 
     const uint8_t *trun = traf + trunOffset;
 
     if (trunSize < 8) {
-        return nil;
+        return;
     }
 
     uint8_t version = trun[0];
@@ -618,11 +691,20 @@ static BOOL YTFindPath(const uint8_t *bytes, NSUInteger length,
         cursor += 4;
     }
 
-    fragment.dataOffset = (uint32_t)(moofOffset - 8 + (NSUInteger)dataOffset);
+    NSUInteger here = start + (NSUInteger)dataOffset;
 
-    NSMutableArray *samples = [NSMutableArray array];
+    if (!*anchored) {
+        fragment.dataOffset = (uint32_t)here;
+        *anchored = YES;
+    }
 
-    uint32_t running = 0;
+    /**
+     * Место сэмпла — от начала данных **первой** пары.
+     *
+     * Так у всех пар получается одна общая ось, и читающему по-прежнему
+     * довольно сложить `dataOffset` с `offset`.
+     */
+    uint32_t running = (uint32_t)(here - (NSUInteger)fragment.dataOffset);
 
     for (uint32_t i = 0; i < count; i++) {
         uint32_t duration = defaultDuration;
@@ -682,10 +764,6 @@ static BOOL YTFindPath(const uint8_t *bytes, NSUInteger length,
 
         running += size;
     }
-
-    fragment.samples = samples;
-
-    return fragment;
 }
 
 @end

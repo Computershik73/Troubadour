@@ -317,7 +317,7 @@ static void YTNotifyChanged(void) {
     NSInteger stored = [[NSUserDefaults standardUserDefaults] integerForKey:key];
 
     if (stored < 1 || stored > YTAudioLanguageAsk + 1) {
-        return YTAudioLanguageDeviceAny;
+        return YTAudioLanguageDeviceAuthored;
     }
 
     return (YTAudioLanguage)(stored - 1);
