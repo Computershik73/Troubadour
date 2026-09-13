@@ -12,6 +12,8 @@
 #import "YTSettings.h"
 #import "YTStreams.h"
 #import "YTTheme.h"
+#import "YTUpdate.h"
+#import "YTUpdatePrompt.h"
 #import "YTUtil.h"
 #import "YTLog.h"
 
@@ -710,6 +712,8 @@ static const CGFloat YTSheetOption = 42;
 
     UILabel *_accountSection;
     YTSettingsRow *_poToken;
+    YTSettingsRow *_update;
+    YTSettingsRow *_updateChannel;
 
     /** Поглядывает за состоянием, пока страница открыта. */
     NSTimer *_watch;
@@ -1013,6 +1017,24 @@ static const CGFloat YTSheetOption = 42;
         [[YTPoToken shared] prepare];
     }];
 
+    /**
+     * Обновление поверх себя — здесь, рядом со сведениями о версии.
+     *
+     * Приложение раздаётся пакетом из своего источника, и до сих пор
+     * ставить его можно было только через Cydia: открыть, обновить
+     * список, найти, нажать. Для сборок, выходящих по нескольку штук
+     * в день, это долгий обряд ради одной кнопки.
+     */
+    _update = [self rowWithIcon:@"pl_reload" label:YTLoc(@"Обновление") action:^{
+        [YTUpdatePrompt checkAloud];
+    }];
+
+    _updateChannel = [self rowWithIcon:@"pl_reload"
+                                 label:YTLoc(@"Канал обновлений")
+                                action:^{
+        [weakSelf pickUpdateChannel];
+    }];
+
     [self refresh];
 }
 
@@ -1091,6 +1113,16 @@ static const CGFloat YTSheetOption = 42;
 
     [_webLogin setValueText:[YTWebAuth isSignedIn] ? YTLoc(@"Выполнен") : YTLoc(@"Нет")];
     [_poToken setValueText:[[YTPoToken shared] isReady] ? YTLoc(@"Готов") : YTLoc(@"Нет")];
+
+    [_update setValueText:[YTUpdate installedVersion]];
+    [_update setHintText:YTLoc(@"Проверить источник и поставить свежую сборку "
+                               @"поверх нынешней, не открывая Cydia")];
+
+    [_updateChannel setValueText:[YTUpdate usesBeta]
+        ? YTLoc(@"Беты") : YTLoc(@"Выпуски")];
+    [_updateChannel setHintText:[YTUpdate usesBeta]
+        ? YTLoc(@"Сборки по мере правок: выходят часто и пишут подробный журнал")
+        : YTLoc(@"Только проверенные версии")];
 
     [_language setValueText:[YTSettings languageTitle:[YTSettings language]]];
     [_interfaceLanguage setValueText:[self interfaceLanguageTitle]];
@@ -1309,6 +1341,28 @@ static const CGFloat YTSheetOption = 42;
                     selected:selected
                       picked:^(NSInteger index) {
         [YTSettings setPreferredHeight:[[heights objectAtIndex:index] integerValue]];
+        [self refresh];
+    }];
+}
+
+/** Канал обновлений: те же два, что и у источника в Cydia. */
+- (void)pickUpdateChannel {
+    NSArray *titles = [NSArray arrayWithObjects:
+        YTLoc(@"Выпуски"), YTLoc(@"Беты"), nil];
+
+    NSArray *hints = [NSArray arrayWithObjects:
+        YTLoc(@"Только проверенные версии"),
+        YTLoc(@"Сборки по мере правок: выходят часто и пишут подробный журнал"),
+        nil];
+
+    [[self sheet] showInView:[self view]
+                       title:YTLoc(@"Канал обновлений")
+                     options:titles
+                       hints:hints
+                    selected:([YTUpdate usesBeta] ? 1 : 0)
+                      picked:^(NSInteger index) {
+        [YTUpdate setUsesBeta:(index == 1)];
+
         [self refresh];
     }];
 }

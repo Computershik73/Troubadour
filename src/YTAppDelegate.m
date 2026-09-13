@@ -11,6 +11,8 @@
 #import "YTRoundedImageView.h"
 #import "YTShellViewController.h"
 #import "YTTheme.h"
+#import "YTUpdate.h"
+#import "YTUpdatePrompt.h"
 #import "YTUtil.h"
 
 @implementation YTAppDelegate
@@ -53,6 +55,16 @@
         [[NSNotificationCenter defaultCenter]
             postNotificationName:YTReleaseHeavyNotification object:nil];
     }];
+
+    /**
+     * Проверка обновлений — тихая и не чаще раза в шесть часов.
+     *
+     * Ходит в сеть отдельно и ничего не задерживает: найдёт свежую
+     * сборку — скажет окном, не найдёт — промолчит. Об одной и той же
+     * версии говорит один раз, сколько бы раз приложение ни открывали.
+     */
+    [YTUpdatePrompt listen];
+    [YTUpdate checkOnLaunch];
 
     // Поднимаем сохранённый вход до того, как экраны спросят о нём.
     [YTAuth restore];

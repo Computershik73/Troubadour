@@ -34,6 +34,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define APP "/Applications/Troubadour.app"
@@ -278,6 +279,113 @@ static int install_from(const char *folder) {
     return 0;
 }
 
+/*
+ * Установка пакета: `dpkg -i`.
+ *
+ * Зачем здесь. Приложение раздаётся пакетом `.deb` из своего источника,
+ * и поставить его поверх себя иначе нельзя: `dpkg` требует root, а
+ * приложение работает от `mobile`. Помощник с битом setuid у нас уже
+ * есть — заводить второй ради одной строки незачем.
+ *
+ * Что проверяется. Путь к пакету: только внутри `/var/mobile`, без «..»,
+ * обычный файл, принадлежащий тому, кто нас позвал. И начало файла:
+ * `.deb` — это архив `ar`, он начинается с «!<arch>»; подсунуть вместо
+ * него скрипт или что угодно ещё не выйдет.
+ *
+ * Чего проверить нельзя. Содержимое пакета: его разбор — это ar, tar и
+ * gzip, три формата ради одной проверки. Поэтому сводку SHA-256 сверяет
+ * приложение: она названа в описи источника, оттуда же взят и адрес.
+ * На устройстве с джейлбрейком, где root доступен и так, этого довольно.
+ */
+static int install_package(const char *path, uid_t caller) {
+    if (strncmp(path, "/var/mobile/", 12) != 0 || strstr(path, "..") != NULL) {
+        fprintf(stderr, "пакет не там, где положено: %s\n", path);
+
+        return 4;
+    }
+
+    struct stat where;
+
+    if (lstat(path, &where) != 0 || !S_ISREG(where.st_mode)) {
+        fprintf(stderr, "нет такого файла: %s\n", path);
+
+        return 4;
+    }
+
+    if (where.st_uid != caller) {
+        fprintf(stderr, "файл не ваш: %s\n", path);
+
+        return 4;
+    }
+
+    int file = open(path, O_RDONLY);
+
+    if (file < 0) {
+        fprintf(stderr, "не открыть %s: %s\n", path, strerror(errno));
+
+        return 4;
+    }
+
+    char head[8] = {0};
+    ssize_t got = read(file, head, sizeof(head));
+
+    close(file);
+
+    if (got != (ssize_t)sizeof(head) || memcmp(head, "!<arch>\n", 8) != 0) {
+        fprintf(stderr, "это не пакет .deb: %s\n", path);
+
+        return 4;
+    }
+
+    /* На rootless-джейлбрейках dpkg лежит под /var/jb. */
+    const char *tools[] = { "/usr/bin/dpkg", "/var/jb/usr/bin/dpkg" };
+    const char *dpkg = 0;
+
+    unsigned i;
+
+    for (i = 0; i < sizeof(tools) / sizeof(tools[0]); i++) {
+        if (access(tools[i], X_OK) == 0) {
+            dpkg = tools[i];
+
+            break;
+        }
+    }
+
+    if (dpkg == 0) {
+        fprintf(stderr, "dpkg не найден — ставить нечем\n");
+
+        return 6;
+    }
+
+    pid_t child = fork();
+
+    if (child < 0) {
+        fprintf(stderr, "не разветвиться: %s\n", strerror(errno));
+
+        return 7;
+    }
+
+    if (child == 0) {
+        execl(dpkg, "dpkg", "-i", path, (char *)0);
+
+        fprintf(stderr, "не запустить dpkg: %s\n", strerror(errno));
+
+        _exit(127);
+    }
+
+    int state = 0;
+
+    while (waitpid(child, &state, 0) < 0 && errno == EINTR) {
+        /* Ожидание прервал сигнал — ждём дальше. */
+    }
+
+    if (!WIFEXITED(state)) {
+        return 8;
+    }
+
+    return WEXITSTATUS(state);
+}
+
 int main(int argc, char **argv) {
     uid_t caller = getuid();
 
@@ -333,7 +441,12 @@ int main(int argc, char **argv) {
         return code;
     }
 
-    fprintf(stderr, "нужно: iconswitch apply <каталог> | iconswitch restore\n");
+    if (argc == 3 && strcmp(argv[1], "install") == 0) {
+        return install_package(argv[2], caller);
+    }
+
+    fprintf(stderr, "нужно: iconswitch apply <каталог> | iconswitch restore"
+                    " | iconswitch install <пакет>\n");
 
     return 2;
 }
