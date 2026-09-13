@@ -63,6 +63,15 @@ NSString *YTTileLineText(NSDictionary *line, NSInteger index);
 @property (nonatomic, assign) BOOL isLive;
 
 /**
+ * Доля просмотренного от 0 до 1, как её сообщает сервер.
+ *
+ * Приходит в `thumbnailOverlayResumePlaybackRenderer` рядом со значком
+ * длительности: `percentDurationWatched`, целые проценты. Минус один —
+ * «сервер не сказал», и тогда берётся своя запись.
+ */
+@property (nonatomic, assign) double watchedShare;
+
+/**
  * Вертикальный ролик. Отмечается при разборе Shorts и нужен карточке:
  * у такого превью пропорция 9:16, и в место под 16:9 оно вписывалось
  * с обрезкой по бокам — от кадра оставалась узкая полоса посередине.

@@ -208,6 +208,23 @@ NSString *YTTileLineText(NSDictionary *line, NSInteger index) {
 
 @implementation YTVideoItem
 
+/**
+ * Доля просмотра по умолчанию — минус один, «сервер не сказал».
+ *
+ * Ноль здесь был бы утверждением «ролик не начинали», и карточка не
+ * смогла бы отличить его от молчания сервера — а значит не заглянула бы
+ * в свою запись.
+ */
+- (id)init {
+    self = [super init];
+
+    if (self != nil) {
+        _watchedShare = -1;
+    }
+
+    return self;
+}
+
 - (BOOL)isPlaylist {
     return [_playlistId length] > 0 && [_videoId length] == 0;
 }
@@ -229,6 +246,35 @@ NSString *YTTileLineText(NSDictionary *line, NSInteger index) {
 static BOOL YTMentionsLive(NSString *text) {
     return [text length] > 0
         && [text rangeOfString:@"LIVE"].location != NSNotFound;
+}
+
+/**
+ * Докуда досмотрено — по слову сервера.
+ *
+ * Лежит в тех же `thumbnailOverlays`, что и значок длительности:
+ * `thumbnailOverlayResumePlaybackRenderer.percentDurationWatched`,
+ * целыми процентами. Я было решил, что TV-клиенту этого не присылают, и
+ * завёл своё хранилище; дамп yttv6 показал обратное. Слову сервера
+ * верим больше: оно знает и о просмотрах с других устройств.
+ *
+ * Минус один означает «не сказано» — это не ноль: ноль был бы
+ * утверждением, что ролик не начинали.
+ */
+static double YTWatchedShareIn(id renderer) {
+    NSDictionary *resume = [YTJson findFirst:@"thumbnailOverlayResumePlaybackRenderer"
+                                          in:renderer limit:600];
+
+    if (resume == nil) {
+        return -1;
+    }
+
+    NSInteger percent = [YTJson intIn:resume key:@"percentDurationWatched"];
+
+    if (percent <= 0) {
+        return -1;
+    }
+
+    return MIN(1.0, (double)percent / 100.0);
 }
 
 static BOOL YTRendererIsLive(id renderer, NSDictionary *badge) {
@@ -356,6 +402,8 @@ static BOOL YTRendererIsLive(id renderer, NSDictionary *badge) {
     if (YTRendererIsLive(tile, badge)) {
         item.isLive = YES;
     }
+
+    item.watchedShare = YTWatchedShareIn(tile);
 
     NSDictionary *browse = [YTJson findFirst:@"browseEndpoint" in:tile limit:400];
     NSString *browseId = [YTJson textIn:browse key:@"browseId"];
@@ -559,6 +607,8 @@ static BOOL YTRendererIsLive(id renderer, NSDictionary *badge) {
         item.isLive = YES;
         item.duration = @"LIVE";
     }
+
+    item.watchedShare = YTWatchedShareIn(renderer);
 
     if (item.duration == nil) {
         item.duration = [YTJson renderedText:badge key:@"text"];

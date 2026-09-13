@@ -213,8 +213,21 @@ static const CGFloat YTCardTextGap = 4;
      * Докуда досмотрен: своя запись, сервер этого не присылает.
      * У эфиров и подборок просмотра нет — полоску не показываем.
      */
-    _watchedShare = (item.isLive || [item.playlistId length] > 0)
-        ? 0 : [YTWatchProgress shareFor:item.videoId];
+    /**
+     * Сперва слово сервера, потом своя запись.
+     *
+     * Сервер знает о просмотрах со всех устройств человека, а наша запись
+     * — только о здешних. Но приходит его доля не в каждой ленте: в
+     * поиске и у канала её нет, а история просмотра есть. Поэтому одно
+     * дополняет другое, а не заменяет.
+     */
+    if (item.isLive || [item.playlistId length] > 0) {
+        _watchedShare = 0;
+    } else if (item.watchedShare >= 0) {
+        _watchedShare = item.watchedShare;
+    } else {
+        _watchedShare = [YTWatchProgress shareFor:item.videoId];
+    }
 
     [_watchedTrack setBackgroundColor:[UIColor colorWithWhite:1 alpha:0.28]];
     [_watchedFill setBackgroundColor:YTColor(0xFF0000)];
