@@ -22,6 +22,9 @@
 @property (nonatomic, copy) NSString *avatar;
 @property (nonatomic, copy) NSString *subtitle;
 
+/** Пояснение, а не пункт: не нажимается, текст во столько строк, сколько нужно. */
+@property (nonatomic, assign) BOOL isNote;
+
 /** Раздел первой страницы: значок, название, значение, стрелка. */
 + (YTSheetRow *)section:(NSString *)icon
                   title:(NSString *)title
@@ -51,6 +54,15 @@
 + (YTSheetRow *)choice:(NSString *)title
                 picked:(BOOL)picked
                 action:(dispatch_block_t)action;
+
+/**
+ * Пояснение под списком.
+ *
+ * Нужно там, где список чего-то **не** показывает, и человеку неоткуда
+ * узнать, почему: у качества это ступени, которые ролик отдаёт только
+ * в шестидесяти кадрах.
+ */
++ (YTSheetRow *)note:(NSString *)text;
 
 /** Возврат к первой странице. */
 + (YTSheetRow *)back:(dispatch_block_t)action;

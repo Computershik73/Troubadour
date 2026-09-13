@@ -6506,8 +6506,23 @@ static NSMutableArray *YTJamItems = nil;
         for (NSNumber *number in [[_heights reverseObjectEnumerator] allObjects]) {
             NSInteger height = [number integerValue];
 
-            NSString *title = [NSString stringWithFormat:@"%ldp%@", (long)height,
-                [YTStreams isBeyondDevice:height] ? YTLoc(@" — может не пойти") : @""];
+            /**
+             * Кадры пишем рядом со ступенью: «1080p60», а не «1080p».
+             *
+             * Одна и та же высота приходит и тридцатью кадрами, и
+             * шестьюдесятью, и разница видна глазом; в оригинале она
+             * тоже подписана. Ноль означает, что дорожка не описана, —
+             * тогда пишем как прежде, одну ступень.
+             */
+            NSInteger frames = [YTStreams framesForHeight:height];
+
+            NSString *title = (frames > 0)
+                ? [NSString stringWithFormat:@"%ldp%ld", (long)height, (long)frames]
+                : [NSString stringWithFormat:@"%ldp", (long)height];
+
+            if ([YTStreams isBeyondDevice:height]) {
+                title = [title stringByAppendingString:YTLoc(@" — может не пойти")];
+            }
 
             if (height == playing) {
                 title = [NSString stringWithFormat:@"%@ · %@", title, YTLoc(@"сейчас")];
@@ -6516,6 +6531,30 @@ static NSMutableArray *YTJamItems = nil;
             [options addObject:[YTSheetRow choice:title
                                            picked:(height == _pickedHeight)
                                            action:^{ [weakSelf pickHeight:height]; }]];
+        }
+
+        /**
+         * Почему список короче, чем у того же ролика в браузере.
+         *
+         * Ступень, которой у ролика нет в тридцати кадрах, из списка
+         * исчезает молча — и выглядит это как «приложение не умеет
+         * 1080p». Объясняем прямо здесь, вместе с тем, что делать.
+         */
+        NSArray *hidden = [YTStreams sixtyOnlyHeights];
+
+        if ([hidden count] > 0 && [YTStreams prefersThirtyFrames]) {
+            NSMutableArray *names = [NSMutableArray array];
+
+            for (NSNumber *tier in [[hidden reverseObjectEnumerator] allObjects]) {
+                [names addObject:[NSString stringWithFormat:@"%ldp",
+                    (long)[tier integerValue]]];
+            }
+
+            [options addObject:[YTSheetRow note:[NSString stringWithFormat:
+                YTLoc(@"Нет %@? У этого ролика такое качество есть только "
+                      @"в 60 кадрах. Включите «60 кадров» в настройках, если "
+                      @"устройство его потянет."),
+                [names componentsJoinedByString:@", "]]]];
         }
     }
 

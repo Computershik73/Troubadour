@@ -63,6 +63,15 @@ static const CGFloat YTSheetCheck = 28;
     return row;
 }
 
++ (YTSheetRow *)note:(NSString *)text {
+    YTSheetRow *row = [[YTSheetRow alloc] init];
+
+    row.title = text;
+    row.isNote = YES;
+
+    return row;
+}
+
 + (YTSheetRow *)choice:(NSString *)title
                 picked:(BOOL)picked
                 action:(dispatch_block_t)action {
@@ -394,6 +403,9 @@ static const CGFloat YTSheetCheck = 28;
  */
 static const NSInteger YTSheetTitleTag = 7101;
 
+/** По нему раскладка узнаёт строку-пояснение среди прочих. */
+static const NSInteger YTSheetNoteTag = 7102;
+
 - (void)retitleRowAt:(NSUInteger)index to:(NSString *)title {
     if (index >= [_rows count]) {
         return;
@@ -464,6 +476,18 @@ static const NSInteger YTSheetTitleTag = 7101;
         [check setText:row.checked ? @"✓" : @""];
         [check setTextAlignment:NSTextAlignmentRight];
         [host addSubview:check];
+
+        return host;
+    }
+
+    if (row.isNote) {
+        UILabel *text = YTLabel(YTFontRegular(12), [self secondaryColor], 0);
+
+        [text setTag:YTSheetTitleTag];
+        [text setText:row.title];
+        [host addSubview:text];
+        [host setTag:YTSheetNoteTag];
+        [host setUserInteractionEnabled:NO];
 
         return host;
     }
@@ -545,7 +569,7 @@ static const NSInteger YTSheetTitleTag = 7101;
     CGFloat listHeight = 0;
 
     for (UIView *row in _rows) {
-        listHeight += [self heightOfRow:row] + YTSheetRowGap;
+        listHeight += [self heightOfRow:row width:inner] + YTSheetRowGap;
     }
 
     BOOL plain = (_body != nil && ![_body isHidden]);
@@ -597,7 +621,7 @@ static const NSInteger YTSheetTitleTag = 7101;
     for (NSUInteger i = 0; i < [_rows count]; i++) {
         UIView *row = [_rows objectAtIndex:i];
 
-        CGFloat height = [self heightOfRow:row];
+        CGFloat height = [self heightOfRow:row width:inner];
 
         [row setFrame:CGRectMake(0, at, inner, height)];
 
@@ -614,7 +638,14 @@ static const NSInteger YTSheetTitleTag = 7101;
  * пункты. Со строкой канала это перестало годиться — в ней кружок
  * и две подписи, — поэтому высота спрашивается у самой строки.
  */
-- (CGFloat)heightOfRow:(UIView *)row {
+- (CGFloat)heightOfRow:(UIView *)row width:(CGFloat)width {
+    // Пояснение — во столько строк, во сколько уложится текст.
+    if ([row tag] == YTSheetNoteTag) {
+        UILabel *text = (UILabel *)[row viewWithTag:YTSheetTitleTag];
+
+        return YTTextHeight([text text], [text font], width, 0) + YTSheetNoteGap;
+    }
+
     return [[row subviews] count] > 0 &&
            [[[row subviews] objectAtIndex:0] isKindOfClass:[YTRoundedImageView class]]
         ? YTSheetAccountHeight : YTSheetRowHeight;
@@ -629,6 +660,13 @@ static const NSInteger YTSheetTitleTag = 7101;
     }
 
     UIView *first = [parts objectAtIndex:0];
+
+    if ([row tag] == YTSheetNoteTag) {
+        [first setFrame:CGRectMake(0, YTSheetNoteGap / 2, width,
+                                   [row bounds].size.height - YTSheetNoteGap)];
+
+        return;
+    }
 
     // Строка канала: кружок слева, две подписи, галочка справа.
     if ([first isKindOfClass:[YTRoundedImageView class]]) {

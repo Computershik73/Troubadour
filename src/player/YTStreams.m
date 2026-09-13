@@ -515,6 +515,10 @@ static NSString *_sabrTrack = nil;
 static BOOL _sabrExact = NO;
 
 /** Что было на выбор в последнем ответе — для меню. */
+/** Лестница качеств: ступень → кадры, и ступени, скрытые тумблером. */
+static NSMutableDictionary *_tierFrames;
+static NSArray *_sixtyOnlyTiers;
+
 static NSArray *_lastSabrHeights = nil;
 static NSArray *_lastSabrTracks = nil;
 
@@ -893,11 +897,18 @@ static NSInteger _renewFailures = 0;
         NSLog(@"[YouTube/Подача] Язык звука по настройке: дорожка %@", byLanguage);
     }
 
+    NSMutableArray *ladder = [NSMutableArray array];
+
     for (NSDictionary *format in [YTJson arrayIn:streaming key:@"adaptiveFormats"]) {
         NSString *mime = [YTJson textIn:format key:@"mimeType"];
 
         if ([mime rangeOfString:@"avc1"].location != NSNotFound) {
             NSInteger tier = [self tierIn:format];
+
+            // Лестницу запоминаем до отбора: в ней и скрытые ступени.
+            [ladder addObject:[NSArray arrayWithObjects:
+                [NSNumber numberWithInteger:tier],
+                [NSNumber numberWithInteger:[YTJson intIn:format key:@"fps"]], nil]];
 
             // То же правило, что и при выборе: шестидесятикадровых
             // на слабом железе не предлагаем и серверу.
@@ -985,6 +996,8 @@ static NSInteger _renewFailures = 0;
             [everyAudio addObject:[self sabrFormatFrom:format]];
         }
     }
+
+    [self rememberLadder:ladder];
 
     _lastSabrHeights = [[tiers allObjects]
         sortedArrayUsingSelector:@selector(compare:)];
@@ -1498,6 +1511,9 @@ static NSInteger _renewFailures = 0;
 
 + (NSArray *)heightsIn:(NSArray *)formats {
     NSMutableSet *tiers = [NSMutableSet set];
+    NSMutableArray *ladder = [NSMutableArray array];
+
+    BOOL thirty = [self prefersThirtyFrames];
 
     for (YTFormat *format in formats) {
         if (!format.hasVideo || format.hasAudio || ![format isH264]) {
@@ -1506,8 +1522,37 @@ static NSInteger _renewFailures = 0;
 
         NSInteger tier = [format qualityTier];
 
-        if (tier > 0) {
-            [tiers addObject:[NSNumber numberWithInteger:tier]];
+        if (tier <= 0) {
+            continue;
+        }
+
+        [ladder addObject:[NSArray arrayWithObjects:
+            [NSNumber numberWithInteger:tier],
+            [NSNumber numberWithInteger:format.fps], nil]];
+
+        /**
+         * Шестидесятикадровые не показываем, когда тумблер выключен.
+         *
+         * Прежде здесь не было отбора вовсе, и список обещал ступени,
+         * которых выбор не давал: `chooseVideo:` берёт их по тому же
+         * правилу, что и подача.
+         */
+        if (thirty && format.fps > 31) {
+            continue;
+        }
+
+        [tiers addObject:[NSNumber numberWithInteger:tier]];
+    }
+
+    [self rememberLadder:ladder];
+
+    /**
+     * Отбор не оставил ничего — значит у ролика все дорожки по шестьдесят.
+     * Показываем их: пустой список качества хуже неудобного.
+     */
+    if ([tiers count] == 0) {
+        for (NSArray *pair in ladder) {
+            [tiers addObject:[pair objectAtIndex:0]];
         }
     }
 
@@ -1524,13 +1569,30 @@ static NSInteger _renewFailures = 0;
             continue;
         }
 
+        /**
+         * Тумблер «60 кадров» действует и здесь.
+         *
+         * Прежде отбор по кадрам был только у подачи, а на готовых
+         * адресах его не было вовсе: список качеств обещал одно,
+         * выбор давал другое. При равной ступени берём ту, что чаще
+         * кадрами, — иначе победила бы первая по порядку, а порядок
+         * ведёт сервер.
+         */
+        if ([self prefersThirtyFrames] && format.fps > 31) {
+            continue;
+        }
+
         NSInteger tier = [format qualityTier];
 
         if (maxHeight > 0 && tier > maxHeight) {
             continue;
         }
 
-        if (best == nil || tier > [best qualityTier]) {
+        BOOL better = (best == nil)
+            || (tier > [best qualityTier])
+            || (tier == [best qualityTier] && format.fps > best.fps);
+
+        if (better) {
             best = format;
         }
     }
@@ -1724,6 +1786,69 @@ static NSInteger _renewFailures = 0;
     });
 
     return maxHeight;
+}
+
+/**
+ * Запоминает лестницу: ступень, её кадры и то, что скрыто тумблером.
+ *
+ * `pairs` — пары «ступень, кадры» по **всем** дорожкам H.264, до отбора.
+ * Отбор делается здесь: так в одном месте и подпись «1080p60», и ответ
+ * на вопрос «а куда делось 1080p».
+ */
++ (void)rememberLadder:(NSArray *)pairs {
+    NSMutableDictionary *frames = [NSMutableDictionary dictionary];
+    NSMutableSet *all = [NSMutableSet set];
+
+    BOOL thirty = [self prefersThirtyFrames];
+
+    for (NSArray *pair in pairs) {
+        NSInteger tier = [[pair objectAtIndex:0] integerValue];
+        NSInteger rate = [[pair objectAtIndex:1] integerValue];
+
+        if (tier <= 0) {
+            continue;
+        }
+
+        NSNumber *key = [NSNumber numberWithInteger:tier];
+
+        [all addObject:key];
+
+        if (thirty && rate > 31) {
+            continue;
+        }
+
+        NSNumber *have = [frames objectForKey:key];
+
+        if (have == nil || rate > [have integerValue]) {
+            [frames setObject:[NSNumber numberWithInteger:rate] forKey:key];
+        }
+    }
+
+    NSMutableArray *only = [NSMutableArray array];
+
+    for (NSNumber *tier in all) {
+        if ([frames objectForKey:tier] == nil) {
+            [only addObject:tier];
+        }
+    }
+
+    @synchronized ([YTStreams class]) {
+        _tierFrames = frames;
+        _sixtyOnlyTiers = [only sortedArrayUsingSelector:@selector(compare:)];
+    }
+}
+
++ (NSInteger)framesForHeight:(NSInteger)height {
+    @synchronized ([YTStreams class]) {
+        return [[_tierFrames objectForKey:
+            [NSNumber numberWithInteger:height]] integerValue];
+    }
+}
+
++ (NSArray *)sixtyOnlyHeights {
+    @synchronized ([YTStreams class]) {
+        return _sixtyOnlyTiers ?: [NSArray array];
+    }
 }
 
 + (BOOL)prefersThirtyFrames {
