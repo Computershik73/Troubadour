@@ -463,8 +463,14 @@
 
             NSArray *shelves = [feed objectForKey:@"groups"];
 
-            if ([shelves count] > 0) {
-                [_groups addObjectsFromArray:shelves];
+            for (NSDictionary *shelf in shelves) {
+                NSMutableDictionary *copy =
+                    [NSMutableDictionary dictionaryWithDictionary:shelf];
+
+                [copy setObject:[NSMutableArray arrayWithArray:
+                    [shelf objectForKey:@"items"]] forKey:@"items"];
+
+                [_groups addObject:copy];
             }
 
             [_pager setToken:[feed objectForKey:@"continuation"]];
@@ -556,6 +562,34 @@
              * карточками из трёх так и висел с дыркой, хотя третья
              * давно приехала. Такой ряд перечитываем отдельно.
              */
+            /**
+             * Лента с полками дочитывается в хвостовую полку.
+             *
+             * Полки приходят только с первой страницей: продолжения — это
+             * просто плитки. Не сложи мы их куда-то, они пополняли бы
+             * `_items`, которых раскладка с полками не смотрит, и листание
+             * упиралось бы в невидимую стену.
+             */
+            if ([_groups count] > 0) {
+                NSDictionary *tail = [_groups lastObject];
+                NSMutableArray *more = [[tail objectForKey:@"title"] length] > 0
+                    ? nil : (NSMutableArray *)[tail objectForKey:@"items"];
+
+                if (more == nil) {
+                    more = [NSMutableArray array];
+
+                    [_groups addObject:[NSDictionary dictionaryWithObject:more
+                                                                   forKey:@"items"]];
+                }
+
+                [more addObjectsFromArray:items];
+                [_items addObjectsFromArray:items];
+                [self rebuildRows];
+                [_table reloadData];
+
+                return;
+            }
+
             NSUInteger before = [_rows count];
 
             BOOL lastPartial = (before > 0 &&

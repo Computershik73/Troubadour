@@ -928,6 +928,24 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
         NSDictionary *node = [hit objectForKey:@"node"];
         NSString *title = [self historyDayTitleIn:node];
 
+        /**
+         * У телевизора заголовок полки лежит двумя ступенями глубже.
+         *
+         * Не `shelfHeaderRenderer.title`, как у «Истории», а
+         * `shelfHeaderRenderer.avatarLockup.avatarLockupRenderer.title` —
+         * рядом с кружком канала. Оттого полки и «не находились»:
+         * в журнале при этом честно значилось `shelfRenderer×3` и
+         * `avatarLockupRenderer×3`, то есть они были на месте.
+         */
+        if ([title length] == 0) {
+            NSDictionary *lockup = [YTJson findFirst:@"avatarLockupRenderer"
+                                                  in:[YTJson objectIn:node
+                                                                  key:@"headerRenderer"]
+                                               limit:400];
+
+            title = [YTJson renderedText:lockup key:@"title"];
+        }
+
         if ([title length] == 0) {
             continue;
         }
