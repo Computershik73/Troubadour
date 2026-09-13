@@ -285,6 +285,9 @@ typedef enum {
  */
 + (NSTimeInterval)scheduledStartIn:(NSDictionary *)json;
 
+/** Готовая надпись ожидания из ответа сервера; пусто — её там нет. */
++ (NSString *)offlineSlateTextIn:(NSDictionary *)json;
+
 /**
  * Лайк и подписка глазами учётной записи — ключи `liked` и `subscribed`.
  *

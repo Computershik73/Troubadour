@@ -513,6 +513,9 @@ static const CGFloat YTPageMargin = 16;
 
     /** Ожидание объявленной трансляции: когда начнётся и когда пробовали. */
     NSTimeInterval _broadcastAt;
+
+    /** Готовая надпись ожидания от сервера — когда час начала неизвестен. */
+    NSString *_broadcastSaid;
     NSTimeInterval _broadcastTriedAt;
     NSTimer *_broadcastWatch;
 
@@ -2620,12 +2623,19 @@ static const CGFloat YTPageMargin = 16;
  * при этом не накапливаются, каждая попытка независима.
  */
 - (void)awaitBroadcastAt:(NSTimeInterval)scheduled generation:(NSInteger)generation {
+    [self awaitBroadcastAt:scheduled said:nil generation:generation];
+}
+
+- (void)awaitBroadcastAt:(NSTimeInterval)scheduled
+                    said:(NSString *)said
+              generation:(NSInteger)generation {
     if (![_loadGeneration isCurrent:generation]) {
         return;
     }
 
     [_busy stop];
 
+    _broadcastSaid = [said copy];
     _broadcastAt = scheduled;
     _broadcastTriedAt = 0;
     _broadcastResuming = NO;
@@ -2641,8 +2651,10 @@ static const CGFloat YTPageMargin = 16;
                                                      userInfo:nil
                                                       repeats:YES];
 
-    NSLog(@"[YouTube/Плеер] Трансляция назначена на %@ — ждём",
-          [NSDate dateWithTimeIntervalSince1970:scheduled]);
+    NSLog(@"[YouTube/Плеер] Трансляция %@ — ждём", scheduled > 0
+        ? [NSString stringWithFormat:@"назначена на %@",
+              [NSDate dateWithTimeIntervalSince1970:scheduled]]
+        : @"ещё не началась, час начала в ответе не назван");
 }
 
 /**
@@ -2683,6 +2695,17 @@ static const CGFloat YTPageMargin = 16;
 - (void)showBroadcastWait {
     if (_broadcastResuming) {
         [_status setText:YTLoc(@"Трансляция прервалась — ждём…")];
+
+        return;
+    }
+
+    /**
+     * Часа не знаем — говорим словами сервера, а не молчим.
+     */
+    if (_broadcastAt <= 0) {
+        [_status setText:[_broadcastSaid length] > 0
+            ? _broadcastSaid
+            : YTLoc(@"Трансляция ещё не началась — ждём…")];
 
         return;
     }
@@ -2746,7 +2769,7 @@ static const CGFloat YTPageMargin = 16;
      * срока, дальше раз в полминуты; у прерванного эфира — сразу и
      * раз в десять секунд.
      */
-    if (!_broadcastResuming && now < _broadcastAt + 30) {
+    if (!_broadcastResuming && _broadcastAt > 0 && now < _broadcastAt + 30) {
         return;
     }
 
@@ -3298,8 +3321,24 @@ static const CGFloat YTPageMargin = 16;
              */
             NSTimeInterval scheduled = [YTApi scheduledStartIn:player];
 
-            if (scheduled > 0) {
-                YTMain(^{ [self awaitBroadcastAt:scheduled generation:generation]; });
+            /**
+             * Ждём по признаку, а не по найденному часу.
+             *
+             * Час начала лежит у разных клиентов в разных местах, и когда
+             * его не нашлось, человек видел «Не удалось получить поток» —
+             * будто приложение сломалось, хотя трансляция просто ещё
+             * не началась. Признак же однозначен: `LIVE_STREAM_OFFLINE`.
+             * Нет часа — покажем то, что сказал сам сервер, а нет и
+             * этого — хотя бы честное «ещё не началась».
+             */
+            if (scheduled > 0 || [YTApi isUpcomingBroadcast:player]) {
+                NSString *said = [YTApi offlineSlateTextIn:player];
+
+                YTMain(^{
+                    [self awaitBroadcastAt:scheduled
+                                      said:said
+                                generation:generation];
+                });
 
                 return;
             }

@@ -3376,16 +3376,42 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
  * в `microformat`, где время записано строкой вида
  * `2026-09-09T20:00:00+00:00`. Берём первое попавшееся.
  */
+/**
+ * Заставка ожидания — ищем её где угодно, а не по одному пути.
+ *
+ * Путь `playabilityStatus.liveStreamability.liveStreamabilityRenderer.
+ * offlineSlate.liveStreamOfflineSlateRenderer` верен для веба, а
+ * у телевизора заставка лежит иначе — и час начала вместе с ней
+ * не находился вовсе. Ищем сам рендерер обходом: он один на ответ.
+ */
++ (NSDictionary *)offlineSlateIn:(NSDictionary *)json {
+    return [YTJson findFirst:@"liveStreamOfflineSlateRenderer"
+                          in:json limit:200000];
+}
+
+/**
+ * Что об ожидании говорит сам сервер.
+ *
+ * В заставке лежит готовая строка вроде «Трансляция начнётся 14 сентября
+ * в 11:00» — на языке запроса и с правильным склонением. Когда она есть,
+ * наша собственная надпись не нужна: своя считается из числа, а число
+ * в ответе бывает не всегда.
+ */
++ (NSString *)offlineSlateTextIn:(NSDictionary *)json {
+    NSDictionary *slate = [self offlineSlateIn:json];
+
+    NSString *main = [YTJson renderedText:slate key:@"mainText"];
+    NSString *under = [YTJson renderedText:slate key:@"subtitleText"];
+
+    if ([main length] > 0 && [under length] > 0) {
+        return [NSString stringWithFormat:@"%@\n%@", main, under];
+    }
+
+    return [main length] > 0 ? main : under;
+}
+
 + (NSTimeInterval)scheduledStartIn:(NSDictionary *)json {
-    NSDictionary *slate = [YTJson objectIn:
-        [YTJson objectIn:
-            [YTJson objectIn:
-                [YTJson objectIn:
-                    [YTJson objectIn:json key:@"playabilityStatus"]
-                    key:@"liveStreamability"]
-                key:@"liveStreamabilityRenderer"]
-            key:@"offlineSlate"]
-        key:@"liveStreamOfflineSlateRenderer"];
+    NSDictionary *slate = [self offlineSlateIn:json];
 
     NSString *seconds = [YTJson stringIn:slate key:@"scheduledStartTime"];
 
