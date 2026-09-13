@@ -3547,7 +3547,8 @@ static NSMutableDictionary *YTLiveHeads = nil;
     YTHttpResponse *response = [YTHttp send:request bodyLimit:0 caching:NO];
 
     [YTPlaybackStats noteTransfer:[response.body length]
-                          elapsed:[NSDate timeIntervalSinceReferenceDate] - startedAt];
+                          elapsed:[NSDate timeIntervalSinceReferenceDate] - startedAt
+                            paced:_liveMode];
 
     return response;
 }
