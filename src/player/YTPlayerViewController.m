@@ -1420,7 +1420,28 @@ static const CGFloat YTPageMargin = 16;
         _zoomAnchor = middle;
         _zoomScale = scale;
 
+        // За край кадр не пускаем вовсе, а не подтягиваем потом.
+        _zoomShift = [self settledShift];
+
         [self applyZoom];
+
+        /**
+         * Подошли близко к величине, при которой полосы исчезают, —
+         * защёлкиваем её.
+         *
+         * Руками поймать эту величину нельзя: промах в пару процентов
+         * оставляет то щель по краю, то лишнюю обрезку. А промахнуться
+         * легко — кадр при этом выглядит почти правильно, и человек
+         * так и смотрит с полоской в палец шириной.
+         */
+        if ([self shouldSnapToFill:scale]) {
+            _zoomUsed = YES;
+
+            [self resetZoom];
+            [self setFillsScreen:YES];
+
+            [self showNotice:YTLoc(@"Полосы убраны")];
+        }
 
         /**
          * Свели пальцы, а уменьшать уже некуда — значит просят выйти.
@@ -1519,22 +1540,16 @@ static const CGFloat YTPageMargin = 16;
 }
 
 /**
- * После жеста подтягивает кадр обратно, если его увели за край.
+ * Сдвиг, при котором под кадром не остаётся пустоты.
  *
- * Сдвиг копится свободно, пока пальцы на экране: ловить границу на
- * каждом шаге — значит дёргать кадр под пальцем. А отпустили — кадр
- * встаёт так, чтобы под ним не было пустоты: дальше половины лишнего
- * размера уезжать некуда.
+ * Увеличенный вдвое кадр торчит за края на половину лишнего размера
+ * с каждой стороны — ровно настолько его и можно увести, не показав
+ * из-под него черноту. Считается на каждом шаге жеста: вытолкнуть кадр
+ * за экран нельзя вовсе, а не «можно, но потом вернётся».
  */
-- (void)settleZoom {
+- (CGPoint)settledShift {
     if (_zoomScale <= 1.0f) {
-        if (_zoomShift.x != 0 || _zoomShift.y != 0) {
-            _zoomShift = CGPointZero;
-
-            [UIView animateWithDuration:0.2 animations:^{ [self applyZoom]; }];
-        }
-
-        return;
+        return CGPointZero;
     }
 
     CGSize box = [_videoHost bounds].size;
@@ -1542,8 +1557,13 @@ static const CGFloat YTPageMargin = 16;
     CGFloat limitX = box.width * (_zoomScale - 1.0f) / 2.0f;
     CGFloat limitY = box.height * (_zoomScale - 1.0f) / 2.0f;
 
-    CGPoint settled = CGPointMake(MAX(-limitX, MIN(limitX, _zoomShift.x)),
-                                  MAX(-limitY, MIN(limitY, _zoomShift.y)));
+    return CGPointMake(MAX(-limitX, MIN(limitX, _zoomShift.x)),
+                       MAX(-limitY, MIN(limitY, _zoomShift.y)));
+}
+
+/** По отпускании остаётся выровнять то, что мог изменить поворот экрана. */
+- (void)settleZoom {
+    CGPoint settled = [self settledShift];
 
     if (settled.x == _zoomShift.x && settled.y == _zoomShift.y) {
         return;
@@ -1552,6 +1572,61 @@ static const CGFloat YTPageMargin = 16;
     _zoomShift = settled;
 
     [UIView animateWithDuration:0.2 animations:^{ [self applyZoom]; }];
+}
+
+/**
+ * Во сколько раз надо увеличить вписанный кадр, чтобы полосы исчезли.
+ *
+ * Это отношение сторон кадра к сторонам экрана — что у лежачего ролика
+ * на высоком экране, что у стоячего на широком. Единица означает, что
+ * полос нет вовсе и защёлкивать нечего.
+ *
+ * Размер берём у самой дорожки. Он же врёт числами на iPad 2 — панель
+ * статистики об этом помнит, — но врёт пропорционально: 853×480 вместо
+ * 1280×720 это всё те же шестнадцать к девяти, а больше нам ничего
+ * и не нужно.
+ */
+- (CGFloat)fillRatio {
+    CGSize frame = CGSizeZero;
+
+    for (AVPlayerItemTrack *piece in [[_player currentItem] tracks]) {
+        AVAssetTrack *track = [piece assetTrack];
+
+        if ([[track mediaType] isEqualToString:AVMediaTypeVideo]) {
+            frame = [track naturalSize];
+
+            break;
+        }
+    }
+
+    CGSize box = [_videoHost bounds].size;
+
+    if (frame.width <= 0 || frame.height <= 0 || box.width <= 0 || box.height <= 0) {
+        return 1.0f;
+    }
+
+    CGFloat video = frame.width / frame.height;
+    CGFloat screen = box.width / box.height;
+
+    return MAX(video / screen, screen / video);
+}
+
+/**
+ * Пора ли защёлкивать подгон.
+ *
+ * Порог — восемь сотых: разница, которую глаз уже не отличает от точного
+ * совпадения, но которой хватает, чтобы не сработать случайно по дороге
+ * к настоящему увеличению. Полосы шириной меньше сотой доли экрана
+ * не в счёт — там защёлкивать нечего.
+ */
+- (BOOL)shouldSnapToFill:(CGFloat)scale {
+    if (_fillsScreen) {
+        return NO;
+    }
+
+    CGFloat ratio = [self fillRatio];
+
+    return (ratio > 1.01f && ABS(scale - ratio) < 0.08f);
 }
 
 /**
