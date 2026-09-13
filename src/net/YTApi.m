@@ -917,6 +917,73 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
  * Разбор тот же, что у «Истории» с её днями: полка — это `shelfRenderer`
  * с заголовком, внутри плитки. Вынесен сюда, чтобы не повторять.
  */
+/**
+ * Токен из старого списка `continuations`.
+ *
+ * Берётся **у названного узла**, а не первый попавшийся в дереве — в этом
+ * вся разница. У телевизора на странице эфиров таких списков сразу два
+ * вида, и они ведут в разные стороны (см. `liveContinuationIn:`).
+ */
++ (NSString *)listTokenIn:(NSDictionary *)node {
+    NSDictionary *first = [YTJson objectAt:[YTJson arrayIn:node key:@"continuations"]
+                                     index:0];
+
+    NSString *token = [YTJson textIn:[YTJson objectIn:first key:@"nextContinuationData"]
+                                 key:@"continuation"];
+
+    if ([token length] > 0) {
+        return token;
+    }
+
+    return [YTJson textIn:[YTJson objectIn:first key:@"reloadContinuationData"]
+                      key:@"continuation"];
+}
+
+/**
+ * Продолжение страницы эфиров — вниз, а не вбок.
+ *
+ * На странице `FEtopics_live` живут два разных продолжения:
+ *
+ *   `sectionListRenderer.continuations`   — следующие **полки**. Дамп yttv7:
+ *       первая страница несёт «Recommended», «Live Now», «Recent Live
+ *       Streams», вторая — «Upcoming Live Streams» и три «Live Now — …».
+ *
+ *   `shelfRenderer.content.horizontalListRenderer.continuations` — следующие
+ *       плитки **одной полки**, по пять штук. Ими телевизор листает полку
+ *       вбок, оставаясь на месте по вертикали.
+ *
+ * Общий `continuationIn:` брал первый попавшийся и попадал на полочный.
+ * Оттого лента и превращалась в бесконечный ряд без заголовков: мы тянули
+ * вбок одну-единственную полку — в журнале это видно как десяток ответов
+ * по восемь килобайт и по пять роликов, восемьдесят штук подряд.
+ */
++ (NSString *)liveContinuationIn:(NSDictionary *)json {
+    NSDictionary *contents = [YTJson objectIn:json key:@"continuationContents"];
+
+    // Ответ на полочный токен: следующий такой же, и он полочный.
+    NSDictionary *horizontal = [YTJson objectIn:contents
+                                            key:@"horizontalListContinuation"];
+
+    if (horizontal != nil) {
+        return [self listTokenIn:horizontal];
+    }
+
+    NSDictionary *section = [YTJson objectIn:contents key:@"sectionListContinuation"];
+
+    if (section == nil) {
+        section = [YTJson findFirst:@"sectionListRenderer" in:json limit:200000];
+    }
+
+    NSString *token = [self listTokenIn:section];
+
+    if ([token length] > 0) {
+        return token;
+    }
+
+    // Безымянному отвечает веб, а у него продолжение обычного вида.
+    return [self continuationIn:json];
+}
+
 + (NSArray *)shelvesIn:(NSDictionary *)json {
     NSMutableArray *groups = [NSMutableArray array];
     NSMutableSet *seen = [NSMutableSet set];
@@ -967,8 +1034,27 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
             continue;
         }
 
-        [groups addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-            title, @"title", items, @"items", nil]];
+        /**
+         * Полка листается отдельно от ленты — своим токеном.
+         *
+         * Телевизор возит полку вбок по пять плиток; у нас полки лежат
+         * рядами, и тот же токен даёт кнопку «Показать ещё» под полкой.
+         * Ленту он не двигает: для неё есть свой, вертикальный.
+         */
+        NSString *more = [self listTokenIn:
+            [YTJson objectIn:[YTJson objectIn:node key:@"content"]
+                         key:@"horizontalListRenderer"]];
+
+        NSMutableDictionary *group = [NSMutableDictionary dictionary];
+
+        [group setObject:title forKey:@"title"];
+        [group setObject:items forKey:@"items"];
+
+        if ([more length] > 0) {
+            [group setObject:more forKey:@"more"];
+        }
+
+        [groups addObject:group];
     }
 
     return groups;
@@ -1020,13 +1106,28 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
     NSMutableDictionary *result =
         [NSMutableDictionary dictionaryWithDictionary:[self feedFrom:json]];
 
+    /**
+     * Продолжение переписываем: `feedFrom:` берёт первое попавшееся,
+     * а здесь их два вида и путать их нельзя.
+     */
+    NSString *token = [self liveContinuationIn:json];
+
+    if ([token length] > 0) {
+        [result setObject:token forKey:@"continuation"];
+    } else {
+        [result removeObjectForKey:@"continuation"];
+    }
+
     NSArray *groups = [self shelvesIn:json];
 
     if ([groups count] > 0) {
         [result setObject:groups forKey:@"groups"];
-    } else {
+    } else if ([continuation length] == 0) {
         /**
          * Полок не нашлось — говорим, что в ответе вообще лежит.
+         *
+         * Только на первой странице: продолжение полки полок и не несёт,
+         * и перечень от неё был бы одним шумом.
          *
          * На устройстве `FEtopics_live` отвечает двадцатью шестью
          * килобайтами и без полок, а в дампе телевизора их три на

@@ -461,17 +461,7 @@
 
             [_groups removeAllObjects];
 
-            NSArray *shelves = [feed objectForKey:@"groups"];
-
-            for (NSDictionary *shelf in shelves) {
-                NSMutableDictionary *copy =
-                    [NSMutableDictionary dictionaryWithDictionary:shelf];
-
-                [copy setObject:[NSMutableArray arrayWithArray:
-                    [shelf objectForKey:@"items"]] forKey:@"items"];
-
-                [_groups addObject:copy];
-            }
+            [self addShelves:[feed objectForKey:@"groups"]];
 
             [_pager setToken:[feed objectForKey:@"continuation"]];
 
@@ -563,26 +553,36 @@
              * давно приехала. Такой ряд перечитываем отдельно.
              */
             /**
-             * Лента с полками дочитывается в хвостовую полку.
+             * Лента с полками дочитывается полками же.
              *
-             * Полки приходят только с первой страницей: продолжения — это
-             * просто плитки. Не сложи мы их куда-то, они пополняли бы
-             * `_items`, которых раскладка с полками не смотрит, и листание
-             * упиралось бы в невидимую стену.
+             * Вертикальное продолжение вкладки эфиров несёт следующие
+             * полки со своими заголовками — «Upcoming Live Streams»,
+             * «Live Now — News» и прочие. Прежде они складывались
+             * в безымянный хвост, и сразу после третьей полки начиналась
+             * та самая мешанина без заголовков.
+             *
+             * Плитки без полок (так отвечает веб безымянному) уходят
+             * в хвостовую полку без заголовка: иначе они пополняли бы
+             * `_items`, которых раскладка с полками не смотрит.
              */
             if ([_groups count] > 0) {
-                NSDictionary *tail = [_groups lastObject];
-                NSMutableArray *more = [[tail objectForKey:@"title"] length] > 0
-                    ? nil : (NSMutableArray *)[tail objectForKey:@"items"];
+                NSArray *shelves = [feed objectForKey:@"groups"];
 
-                if (more == nil) {
-                    more = [NSMutableArray array];
+                if ([shelves count] > 0) {
+                    [self addShelves:shelves];
+                } else {
+                    NSMutableDictionary *tail = [_groups lastObject];
 
-                    [_groups addObject:[NSDictionary dictionaryWithObject:more
-                                                                   forKey:@"items"]];
+                    if ([[tail objectForKey:@"title"] length] > 0) {
+                        tail = [NSMutableDictionary dictionaryWithObject:
+                            [NSMutableArray array] forKey:@"items"];
+
+                        [_groups addObject:tail];
+                    }
+
+                    [[tail objectForKey:@"items"] addObjectsFromArray:items];
                 }
 
-                [more addObjectsFromArray:items];
                 [_items addObjectsFromArray:items];
                 [self rebuildRows];
                 [_table reloadData];
@@ -637,6 +637,96 @@
  * планшета ряды по два раскладывались бы по трём местам, и треть каждого
  * пустовала бы.
  */
+/**
+ * Полки складываются изменяемыми: их ещё дополнять.
+ *
+ * И плитки, и сам словарь: у полки под кнопкой «Показать ещё» меняется
+ * и список, и токен, а `YTApi` отдаёт их обычными словарями.
+ */
+- (void)addShelves:(NSArray *)shelves {
+    for (NSDictionary *shelf in shelves) {
+        NSMutableDictionary *copy =
+            [NSMutableDictionary dictionaryWithDictionary:shelf];
+
+        [copy setObject:[NSMutableArray arrayWithArray:[shelf objectForKey:@"items"]]
+                 forKey:@"items"];
+
+        [_groups addObject:copy];
+    }
+}
+
+/**
+ * «Показать ещё» под полкой.
+ *
+ * Телевизор возит полку вбок и берёт по пять плиток за раз; пять — это
+ * на нашу сетку два с половиной ряда, и на одно нажатие такой добавки
+ * жалко. Поэтому за нажатие спрашиваем до четырёх страниц подряд —
+ * около двадцати плиток — или пока полка не кончится.
+ */
+- (void)loadMoreInGroup:(NSUInteger)index {
+    if (index >= [_groups count]) {
+        return;
+    }
+
+    NSMutableDictionary *group = [_groups objectAtIndex:index];
+    NSString *token = [group objectForKey:@"more"];
+
+    if ([token length] == 0 || [group objectForKey:@"loading"] != nil) {
+        return;
+    }
+
+    [group setObject:[NSNumber numberWithBool:YES] forKey:@"loading"];
+    [self rebuildRows];
+    [_table reloadData];
+
+    NSInteger generation = [_generation current];
+
+    YTAsync(^{
+        NSMutableArray *fetched = [NSMutableArray array];
+        NSString *next = token;
+
+        for (NSUInteger page = 0; page < 4 && [next length] > 0; page++) {
+            NSDictionary *feed = [YTApi liveFeed:next];
+            NSArray *items = [feed objectForKey:@"items"];
+
+            if ([items count] == 0) {
+                next = nil;
+                break;
+            }
+
+            [fetched addObjectsFromArray:items];
+            next = [feed objectForKey:@"continuation"];
+        }
+
+        NSString *tail = next;
+
+        YTMain(^{
+            if (![_generation isCurrent:generation]) {
+                return;
+            }
+
+            [group removeObjectForKey:@"loading"];
+
+            if ([tail length] > 0) {
+                [group setObject:tail forKey:@"more"];
+            } else {
+                [group removeObjectForKey:@"more"];
+            }
+
+            [[group objectForKey:@"items"] addObjectsFromArray:fetched];
+            [_items addObjectsFromArray:fetched];
+
+            NSLog(@"[YouTube/Главная] Полка «%@»: +%lu, всего %lu, ещё %@",
+                  [group objectForKey:@"title"], (unsigned long)[fetched count],
+                  (unsigned long)[[group objectForKey:@"items"] count],
+                  [tail length] > 0 ? @"есть" : @"нет");
+
+            [self rebuildRows];
+            [_table reloadData];
+        });
+    });
+}
+
 - (void)rebuildRows {
     [_rows removeAllObjects];
 
@@ -646,7 +736,8 @@
      * «Recommended», «Live Now», «Recent Live Streams».
      */
     if ([_groups count] > 0) {
-        for (NSDictionary *group in _groups) {
+        for (NSUInteger index = 0; index < [_groups count]; index++) {
+            NSDictionary *group = [_groups objectAtIndex:index];
             NSString *title = [group objectForKey:@"title"];
 
             if ([title length] > 0) {
@@ -663,6 +754,15 @@
                 }
 
                 [current addObject:item];
+            }
+
+            // У полки своё продолжение — под ней и кнопка.
+            if ([[group objectForKey:@"more"] length] > 0 ||
+                [group objectForKey:@"loading"] != nil) {
+                [_rows addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                    [NSNumber numberWithUnsignedInteger:index], @"more",
+                    [group objectForKey:@"loading"] != nil
+                        ? @"Загрузка…" : @"Показать ещё", @"label", nil]];
             }
         }
 
@@ -768,7 +868,7 @@
 
     // Заголовок полки: одна строка с полями, как у дней в «Истории».
     if ([entry isKindOfClass:[NSDictionary class]]) {
-        return 44;
+        return [entry objectForKey:@"more"] != nil ? 52 : 44;
     }
 
     NSArray *row = (NSArray *)entry;
@@ -864,6 +964,38 @@
 
     id entry = [_rows objectAtIndex:[path row]];
 
+    /**
+     * Кнопка «Показать ещё» — не заголовок: у неё своя ячейка и нажатие.
+     */
+    if ([entry isKindOfClass:[NSDictionary class]] &&
+        [entry objectForKey:@"more"] != nil) {
+        static NSString *moreId = @"more";
+
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:moreId];
+
+        if (cell == nil) {
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
+                                          reuseIdentifier:moreId];
+
+            UILabel *label = YTLabel(YTFontMedium(14), [YTTheme primaryText], 1);
+
+            [label setTag:1];
+            [label setTextAlignment:NSTextAlignmentCenter];
+            [[cell contentView] addSubview:label];
+        }
+
+        UILabel *label = (UILabel *)[[cell contentView] viewWithTag:1];
+
+        [cell setBackgroundColor:[YTTheme background]];
+        [[cell contentView] setBackgroundColor:[YTTheme background]];
+        [label setTextColor:[YTTheme secondaryText]];
+        [label setText:[entry objectForKey:@"label"]];
+        [label setFrame:CGRectMake(YTFeedPadding, 0,
+                                   [self bounds].size.width - YTFeedPadding * 2, 44)];
+
+        return cell;
+    }
+
     if ([entry isKindOfClass:[NSDictionary class]]) {
         static NSString *shelfId = @"shelf";
 
@@ -910,6 +1042,19 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     if (!_suggestions) {
+        // Единственное, что здесь нажимается, — «Показать ещё» под полкой.
+        if (!_skeleton && [path row] < (NSInteger)[_rows count]) {
+            id entry = [_rows objectAtIndex:[path row]];
+
+            if ([entry isKindOfClass:[NSDictionary class]] &&
+                [entry objectForKey:@"more"] != nil) {
+                [tableView deselectRowAtIndexPath:path animated:YES];
+
+                [self loadMoreInGroup:
+                    [[entry objectForKey:@"more"] unsignedIntegerValue]];
+            }
+        }
+
         return;
     }
 
