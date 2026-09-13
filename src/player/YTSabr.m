@@ -240,11 +240,11 @@
     /** Что последний раз сказали о возможностях — чтобы не повторяться. */
     NSString *_capsSaid;
 
-    /** Ступень, названная человеком у эфира; 0 — выбор за сервером. */
-    NSInteger _liveWantedTier;
+    /** Последний отказ был «ни одной дорожки не выбрано». */
+    BOOL _refusedNoVideo;
 
-    /** Сколько ответов подряд пришло без видео, пока перечень сужен. */
-    NSInteger _narrowEmpty;
+    /** Отпускали ли уже закрепление после такого отказа. */
+    BOOL _softenedPin;
     BOOL _hardPin;
     BOOL _trackChanged;
 
@@ -505,18 +505,6 @@ enum { YTLiveCushion = 120 };
           (long)format.itag, (long)format.height,
           frames > 0 ? [NSString stringWithFormat:@", %ld кадр/с", (long)frames] : @"",
           hard ? @"выбор человека — менять нельзя" : @"сама, до конца ролика");
-}
-
-- (void)setLiveWantedTier:(NSInteger)tier {
-    if (_liveWantedTier == tier) {
-        return;
-    }
-
-    _liveWantedTier = tier;
-    _narrowEmpty = 0;
-
-    // Перечень изменился — назовём его серверу заново.
-    _toldFormats = NO;
 }
 
 - (NSInteger)pinnedVideoItag {
@@ -1553,18 +1541,6 @@ enum { YTLiveCushion = 120 };
          * пустоту. Ровно так делает и Android-версия, где эфиры идут.
          */
         if (!_liveMode && _pinnedVideo != nil && format.itag != _pinnedVideo.itag) {
-            continue;
-        }
-
-        /**
-         * У эфира вместо закрепления — сужение до названной ступени.
-         *
-         * Остаются все дорожки этой высоты: у иного эфира 720p есть и в
-         * тридцати кадрах, и в шестидесяти, и выбирать между ними —
-         * по-прежнему серверу. Ступени ниже он из перечня не увидит,
-         * а значит и не подставит их вместо просимой.
-         */
-        if (_liveMode && _liveWantedTier > 0 && format.height != _liveWantedTier) {
             continue;
         }
 
@@ -2713,6 +2689,20 @@ enum { YTLiveCushion = 120 };
 
             NSLog(@"[YouTube/Подача] Отказ: %@", reason ?: @"без объяснения");
 
+            /**
+             * «Ни одной дорожки не выбрано» — отказ поправимый.
+             *
+             * Он означает, что из названного нами сервер сейчас не может
+             * дать ничего. Когда в перечне одна дорожка — а так бывает
+             * при закреплении по выбору человека, — это не приговор
+             * ролику, а приговор нашему упрямству: стоит предложить
+             * остальные, и показ пойдёт. Прежде здесь всё кончалось
+             * переходом на готовые адреса, а у эфира их нет.
+             */
+            if ([reason rangeOfString:@"no_video_selected"].location != NSNotFound) {
+                _refusedNoVideo = YES;
+            }
+
             break;
         }
 
@@ -3079,6 +3069,26 @@ static NSMutableDictionary *YTLiveHeads = nil;
         }
 
         if (!_redirected) {
+            /**
+             * Закреплённую дорожку сервер не принял — отпускаем и просим
+             * снова, теперь со всем перечнем.
+             *
+             * Один раз за сессию: если и полный перечень не подошёл,
+             * дело не в закреплении.
+             */
+            if (_refusedNoVideo && _hardPin && !_softenedPin && _pinnedVideo != nil) {
+                NSLog(@"[YouTube/Подача] Закреплённую %ld сервер не принял — "
+                      @"предлагаем весь перечень",
+                      (long)_pinnedVideo.itag);
+
+                _softenedPin = YES;
+                _hardPin = NO;
+                _refusedNoVideo = NO;
+                _toldFormats = NO;
+
+                continue;
+            }
+
             /**
              * У эфира первый ответ бывает пуст — без единого куска и
              * заголовка, зато с краем в части №31. Прежде на этом всё
@@ -3666,27 +3676,6 @@ static NSMutableDictionary *YTLiveHeads = nil;
           _videoInit != nil ? @"есть" : @"нет",
           _audioInit != nil ? @"есть" : @"нет",
           tail > 0 ? @", хвост не разобран" : @"");
-
-    /**
-     * Сужение не задалось — отходим назад, пока эфир не встал.
-     *
-     * Три пустых ответа подряд означают, что названной ступени сервер
-     * сейчас не даёт; лучше смотреть ниже, чем не смотреть вовсе.
-     * Проверка стоит здесь, а не у отказов: пустота приходит успешным
-     * ответом, без кода ошибки и без слов.
-     */
-    if (_liveMode && _liveWantedTier > 0) {
-        if ([_videoSegments count] > 0) {
-            _narrowEmpty = 0;
-        } else if (++_narrowEmpty >= 3) {
-            NSLog(@"[YouTube/Подача] Эфир: ступени %ldp сервер не даёт — "
-                  @"возвращаем полный перечень", (long)_liveWantedTier);
-
-            _liveWantedTier = 0;
-            _narrowEmpty = 0;
-            _toldFormats = NO;
-        }
-    }
 
     return ([_videoSegments count] > 0 || _videoInit != nil);
 }

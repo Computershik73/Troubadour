@@ -1094,19 +1094,6 @@ static NSInteger _renewFailures = 0;
         [sabr pinVideo:[self sabrFormatFrom:video] hard:YES];
     }
 
-    /**
-     * У эфира выбор человека доносится сужением перечня.
-     *
-     * Прежде он был чистым пожеланием: названная ступень уходила первой,
-     * и на этом всё. Сервер при шестидесятикадровом эфире брал 480p30 —
-     * самое высокое из тридцатикадровых, — потому что тридцатикадровые
-     * тоже лежали в перечне. Теперь ниже названной ступени он там ничего
-     * не найдёт.
-     */
-    if (_sabrExact && sabr.liveMode) {
-        [sabr setLiveWantedTier:[self tierIn:video]];
-    }
-
     NSLog(@"[YouTube/Подача] В предпочтениях: видео %lu, звука %lu, "
           @"кадров не выше %ld",
           (unsigned long)[allVideo count], (unsigned long)[allAudio count],
