@@ -1215,14 +1215,39 @@ enum { YTLiveCushion = 120 };
      */
     NSInteger frames = [YTStreams prefersThirtyFrames] ? 30 : 60;
 
+    /**
+     * Поле 12 — последнее чужое число в этом сообщении.
+     *
+     * В дампе оно равно 2 684 050, в соседнем — 2 448 612, и оба сняты
+     * с браузера, прижатого расширением к 720p при тридцати кадрах.
+     * У нас оно стояло намертво, и выходило заявление «умею 1080p60,
+     * но осилю столько, сколько весит 720p30». Сервер верил второй
+     * половине: закрепив дорожку 137 в одиночку, мы получали
+     * `sabr.no_video_selected` (журнал, 08:20:12), а у эфира, где
+     * закрепления нет, он просто выбирал 136 при любом нашем «хочу 1080».
+     *
+     * Ровно та же ловушка, что с полями 3 и 4 в 1.4-164 и с полем 11
+     * в 1.4-193: строение сообщения — из дампа, числа должны быть наши.
+     * Пересчитываем от того же образца по точкам в секунду: 1280×720
+     * при тридцати кадрах — это и есть 2 684 048.
+     */
+    double sample = 2684048.0
+        / (1280.0 * 720.0 * 30.0)
+        * (double)ceiling * (double)(ceiling * 16 / 9) * (double)frames;
+
     YTProtoWriter *videoCap = [YTProtoWriter writer];
     [videoCap putVarint:2 field:1];
     [videoCap putVarint:1 field:2];
     [videoCap putVarint:(uint64_t)ceiling field:3];
     [videoCap putVarint:(uint64_t)(ceiling * 16 / 9) field:4];
     [videoCap putVarint:(uint64_t)frames field:11];
-    [videoCap putVarint:2684048 field:12];
+    [videoCap putVarint:(uint64_t)sample field:12];
     [videoCap putVarint:0 field:15];
+
+    if (_requestNumber == 0) {
+        NSLog(@"[YouTube/Подача] Возможности: %ldx%ld, %ld кадр/с, поле 12 = %.0f",
+              (long)(ceiling * 16 / 9), (long)ceiling, (long)frames, sample);
+    }
 
     YTProtoWriter *audioCap = [YTProtoWriter writer];
     [audioCap putVarint:1 field:1];
