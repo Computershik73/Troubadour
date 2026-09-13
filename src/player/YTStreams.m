@@ -1836,6 +1836,32 @@ static NSInteger _renewFailures = 0;
         _tierFrames = frames;
         _sixtyOnlyTiers = [only sortedArrayUsingSelector:@selector(compare:)];
     }
+
+    /**
+     * Лестницу пишем в журнал целиком.
+     *
+     * Частота у ступени — не наша выдумка и не округление: её называет
+     * сам YouTube для каждой дорожки. У ролика, снятого на 24 кадра, так
+     * и стоит 24, а 144p сервер отдаёт половинной частотой — 15 кадров
+     * при 30 у остальных ступеней. Без этой строки спорить об этом
+     * пришлось бы на память.
+     */
+    NSMutableString *listed = [NSMutableString string];
+
+    for (NSNumber *tier in [[frames allKeys]
+             sortedArrayUsingSelector:@selector(compare:)]) {
+        [listed appendFormat:@"%@%ldp%ld", [listed length] > 0 ? @", " : @"",
+            (long)[tier integerValue],
+            (long)[[frames objectForKey:tier] integerValue]];
+    }
+
+    for (NSNumber *tier in [self sixtyOnlyHeights]) {
+        [listed appendFormat:@"%@%ldp — только 60",
+            [listed length] > 0 ? @", " : @"", (long)[tier integerValue]];
+    }
+
+    NSLog(@"[YouTube/Потоки] Лестница качеств: %@",
+          [listed length] > 0 ? listed : @"пусто");
 }
 
 + (NSInteger)framesForHeight:(NSInteger)height {
