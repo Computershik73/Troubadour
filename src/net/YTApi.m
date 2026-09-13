@@ -966,18 +966,33 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
  * «Recommended», «Live Now», «Recent Live Streams».
  */
 + (NSDictionary *)liveFeed:(NSString *)continuation {
+    /**
+     * У вошедшего и у безымянного — разные двери.
+     *
+     * `FEtopics_live` — раздел TV-клиента, и он требует токена: без входа
+     * не отвечает вовсе. Безымянному эфиры отдаёт канал
+     * `UC4R8DWoMoI7CAwX8_LjQHig` — это и есть youtube.com/live, куда
+     * браузер попадает без всякой подписи (дамп yt8: ни `Authorization`,
+     * ни кук, клиент WEB, ответ на 784 килобайта).
+     *
+     * Полки у них разные по виду, но не по смыслу: у телевизора
+     * `shelfRenderer`, у веба `richShelfRenderer`. Разбор знает оба.
+     */
+    BOOL signedIn = [YTAuth isSignedIn];
+
     NSMutableDictionary *body = [NSMutableDictionary dictionary];
 
     if ([continuation length] > 0) {
         [body setObject:continuation forKey:@"continuation"];
     } else {
-        [body setObject:@"FEtopics_live" forKey:@"browseId"];
+        [body setObject:(signedIn ? @"FEtopics_live" : @"UC4R8DWoMoI7CAwX8_LjQHig")
+                 forKey:@"browseId"];
     }
 
     NSDictionary *json = [self post:@"browse"
                                body:body
-                             client:@"TVHTML5"
-                          authorize:YES
+                             client:(signedIn ? @"TVHTML5" : @"WEB")
+                          authorize:signedIn
                                 ttl:0];
 
     if (json == nil) {
@@ -993,7 +1008,8 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
         [result setObject:groups forKey:@"groups"];
     }
 
-    NSLog(@"[YouTube/API] Эфиры: полок %lu, роликов %lu, продолжение %@",
+    NSLog(@"[YouTube/API] Эфиры (%@): полок %lu, роликов %lu, продолжение %@",
+          signedIn ? @"раздел TV" : @"канал, без входа",
           (unsigned long)[groups count],
           (unsigned long)[[result objectForKey:@"items"] count],
           [result objectForKey:@"continuation"] != nil ? @"есть" : @"нет");
