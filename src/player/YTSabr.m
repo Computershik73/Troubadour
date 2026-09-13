@@ -239,6 +239,12 @@
 
     /** Что последний раз сказали о возможностях — чтобы не повторяться. */
     NSString *_capsSaid;
+
+    /** Ступень, названная человеком у эфира; 0 — выбор за сервером. */
+    NSInteger _liveWantedTier;
+
+    /** Сколько ответов подряд пришло без видео, пока перечень сужен. */
+    NSInteger _narrowEmpty;
     BOOL _hardPin;
     BOOL _trackChanged;
 
@@ -499,6 +505,18 @@ enum { YTLiveCushion = 120 };
           (long)format.itag, (long)format.height,
           frames > 0 ? [NSString stringWithFormat:@", %ld кадр/с", (long)frames] : @"",
           hard ? @"выбор человека — менять нельзя" : @"сама, до конца ролика");
+}
+
+- (void)setLiveWantedTier:(NSInteger)tier {
+    if (_liveWantedTier == tier) {
+        return;
+    }
+
+    _liveWantedTier = tier;
+    _narrowEmpty = 0;
+
+    // Перечень изменился — назовём его серверу заново.
+    _toldFormats = NO;
 }
 
 - (NSInteger)pinnedVideoItag {
@@ -1535,6 +1553,18 @@ enum { YTLiveCushion = 120 };
          * пустоту. Ровно так делает и Android-версия, где эфиры идут.
          */
         if (!_liveMode && _pinnedVideo != nil && format.itag != _pinnedVideo.itag) {
+            continue;
+        }
+
+        /**
+         * У эфира вместо закрепления — сужение до названной ступени.
+         *
+         * Остаются все дорожки этой высоты: у иного эфира 720p есть и в
+         * тридцати кадрах, и в шестидесяти, и выбирать между ними —
+         * по-прежнему серверу. Ступени ниже он из перечня не увидит,
+         * а значит и не подставит их вместо просимой.
+         */
+        if (_liveMode && _liveWantedTier > 0 && format.height != _liveWantedTier) {
             continue;
         }
 
@@ -3636,6 +3666,27 @@ static NSMutableDictionary *YTLiveHeads = nil;
           _videoInit != nil ? @"есть" : @"нет",
           _audioInit != nil ? @"есть" : @"нет",
           tail > 0 ? @", хвост не разобран" : @"");
+
+    /**
+     * Сужение не задалось — отходим назад, пока эфир не встал.
+     *
+     * Три пустых ответа подряд означают, что названной ступени сервер
+     * сейчас не даёт; лучше смотреть ниже, чем не смотреть вовсе.
+     * Проверка стоит здесь, а не у отказов: пустота приходит успешным
+     * ответом, без кода ошибки и без слов.
+     */
+    if (_liveMode && _liveWantedTier > 0) {
+        if ([_videoSegments count] > 0) {
+            _narrowEmpty = 0;
+        } else if (++_narrowEmpty >= 3) {
+            NSLog(@"[YouTube/Подача] Эфир: ступени %ldp сервер не даёт — "
+                  @"возвращаем полный перечень", (long)_liveWantedTier);
+
+            _liveWantedTier = 0;
+            _narrowEmpty = 0;
+            _toldFormats = NO;
+        }
+    }
 
     return ([_videoSegments count] > 0 || _videoInit != nil);
 }
