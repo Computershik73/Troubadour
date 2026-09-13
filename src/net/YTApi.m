@@ -1006,6 +1006,34 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
 
     if ([groups count] > 0) {
         [result setObject:groups forKey:@"groups"];
+    } else {
+        /**
+         * Полок не нашлось — говорим, что в ответе вообще лежит.
+         *
+         * На устройстве `FEtopics_live` отвечает двадцатью шестью
+         * килобайтами и без полок, а в дампе телевизора их три на
+         * девяносто двух. Разница либо в версии клиента, либо в разметке;
+         * без перечня того, что пришло, об этом только гадать.
+         */
+        NSMutableDictionary *counts = [NSMutableDictionary dictionary];
+
+        YTCollectRendererNames(json, counts, 0);
+
+        NSArray *names = [[counts allKeys] sortedArrayUsingComparator:
+            ^NSComparisonResult(NSString *first, NSString *second) {
+                return [[counts objectForKey:second] compare:[counts objectForKey:first]];
+            }];
+
+        NSMutableString *listed = [NSMutableString string];
+
+        for (NSUInteger i = 0; i < [names count] && i < 14; i++) {
+            NSString *name = [names objectAtIndex:i];
+
+            [listed appendFormat:@"%@%@×%@", [listed length] > 0 ? @", " : @"",
+                name, [counts objectForKey:name]];
+        }
+
+        NSLog(@"[YouTube/API] Эфиры: полок нет, в ответе лежит: %@", listed);
     }
 
     NSLog(@"[YouTube/API] Эфиры (%@): полок %lu, роликов %lu, продолжение %@",
@@ -3177,6 +3205,26 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
         isEqualToString:@"LOGIN_REQUIRED"];
 }
 
+/**
+ * Эфир объявлен, но ещё не начался.
+ *
+ * Сервер отвечает `LIVE_STREAM_OFFLINE` и кладёт рядом час начала. Потоков
+ * при этом нет ни у одного клиента, и перебирать их бессмысленно: в
+ * журнале 100 на один такой ролик ушло десять запросов и четыре секунды,
+ * после чего плеер всё равно показал пустоту.
+ */
++ (BOOL)isUpcomingBroadcast:(NSDictionary *)json {
+    if (json == nil) {
+        return NO;
+    }
+
+    NSString *state = [YTJson stringIn:[YTJson objectIn:json key:@"playabilityStatus"]
+                                   key:@"status"
+                              fallback:@""];
+
+    return [state isEqualToString:@"LIVE_STREAM_OFFLINE"];
+}
+
 + (NSString *)playabilityReason:(NSDictionary *)json {
     if (json == nil) {
         return @"пустой ответ";
@@ -4746,6 +4794,20 @@ static NSString *YTBase64(NSData *data) {
 
             [self captureVisitorData:forced];
             [self setStreamUserAgent:YTTvUserAgent binding:[self sessionBinding]];
+
+            return forced;
+        }
+
+        /**
+         * Объявленный эфир дальше не ищем.
+         *
+         * Потоков у него нет ни у кого, зато в этом же ответе лежит час
+         * начала — плееру только он и нужен, чтобы показать надпись.
+         */
+        if ([self isUpcomingBroadcast:forced]) {
+            NSLog(@"[YouTube/Плеер] Эфир ещё не начался (%@) — ждём, "
+                  @"остальных клиентов не спрашиваем",
+                  [self playabilityReason:forced]);
 
             return forced;
         }

@@ -2426,13 +2426,32 @@ static const CGFloat YTPageMargin = 16;
         return;
     }
 
+    /**
+     * Дальше часа — со днём, иначе одно время вводит в заблуждение.
+     *
+     * «Начнётся в 17:30» у трансляции, до которой двенадцать часов,
+     * читается как «сегодня вечером», а она может быть и завтра. День
+     * добавляем всегда, когда он не сегодняшний.
+     */
+    NSDate *when = [NSDate dateWithTimeIntervalSince1970:_broadcastAt];
+
     NSDateFormatter *clock = [[NSDateFormatter alloc] init];
 
-    [clock setDateStyle:NSDateFormatterNoStyle];
     [clock setTimeStyle:NSDateFormatterShortStyle];
 
-    [_status setText:YTLocF(@"Трансляция начнётся в %@",
-        [clock stringFromDate:[NSDate dateWithTimeIntervalSince1970:_broadcastAt]])];
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    NSUInteger units = NSYearCalendarUnit | NSMonthCalendarUnit | NSDayCalendarUnit;
+
+    NSDateComponents *today = [calendar components:units fromDate:[NSDate date]];
+    NSDateComponents *day = [calendar components:units fromDate:when];
+
+    BOOL sameDay = ([today year] == [day year]
+                    && [today month] == [day month]
+                    && [today day] == [day day]);
+
+    [clock setDateStyle:sameDay ? NSDateFormatterNoStyle : NSDateFormatterMediumStyle];
+
+    [_status setText:YTLocF(@"Трансляция начнётся %@", [clock stringFromDate:when])];
 }
 
 - (void)tickBroadcast {

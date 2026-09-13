@@ -49,6 +49,9 @@
  */
 + (NSArray *)homeCategories;
 
+/** Эфир объявлен, но ещё не начался: потоков нет ни у одного клиента. */
++ (BOOL)isUpcomingBroadcast:(NSDictionary *)json;
+
 /** Вкладка «Сейчас в эфире»: `FEtopics_live`, отвечает полками. */
 + (NSDictionary *)liveFeed:(NSString *)continuation;
 
