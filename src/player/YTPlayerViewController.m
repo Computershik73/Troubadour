@@ -409,6 +409,12 @@ static const CGFloat YTPageMargin = 16;
     /** Отмечали ли уже этот ролик просмотренным. */
     BOOL _watchReported;
 
+    /** Запись просмотра: конец прошлого отрезка и когда он начался. */
+    NSTimeInterval _watchSegmentFrom;
+    NSTimeInterval _watchSegmentAt;
+    NSInteger _watchPings;
+    NSTimer *_watchTimer;
+
     YTTappableView *_channelTouch;
 
     /** Название — кнопка описания, и само описание при нём. */
@@ -5221,6 +5227,8 @@ static NSMutableArray *YTJamItems = nil;
                 NSDictionary *json = _playerJson;
 
                 YTAsync(^{ [YTApi reportWatched:json position:0]; });
+
+                [self startWatchReports];
             }
 
             // Ролик пошёл — отсчёт до скрытия пульта начинается заново.
@@ -5784,6 +5792,9 @@ static NSMutableArray *YTJamItems = nil;
     _finished = YES;
     _meantToPlay = NO;
 
+    // Ролик доигран — закрываем запись просмотра последним отрезком.
+    [self stopWatchReports:YES];
+
     /**
      * Кольцо ожидания гасим: ролик доиграл, ждать больше нечего.
      *
@@ -5869,7 +5880,91 @@ static NSMutableArray *YTJamItems = nil;
     }
 }
 
+/**
+ * Запись просмотра ведётся отрезками, пока ролик идёт.
+ *
+ * Первые три отметки через десять секунд, дальше через сорок — так же,
+ * как в дампе настоящего клиента. Реже нельзя: оборвись показ между
+ * отметками, потерянным окажется весь промежуток.
+ */
+- (void)startWatchReports {
+    [self stopWatchReports:NO];
+
+    _watchSegmentFrom = 0;
+    _watchSegmentAt = [NSDate timeIntervalSinceReferenceDate];
+    _watchPings = 0;
+
+    _watchTimer = [NSTimer scheduledTimerWithTimeInterval:10.0
+                                                   target:self
+                                                 selector:@selector(reportWatchSegment)
+                                                 userInfo:nil
+                                                  repeats:YES];
+}
+
+- (void)reportWatchSegment {
+    if (_player == nil || _playerJson == nil || [_player rate] <= 0) {
+        return;
+    }
+
+    _watchPings++;
+
+    // После трёх отметок подряд переходим на сорок секунд, как в дампе.
+    if (_watchPings == 3) {
+        [_watchTimer invalidate];
+
+        _watchTimer = [NSTimer scheduledTimerWithTimeInterval:40.0
+                                                       target:self
+                                                     selector:@selector(reportWatchSegment)
+                                                     userInfo:nil
+                                                      repeats:YES];
+    }
+
+    [self sendWatchSegmentFinal:NO];
+}
+
+/** Отрезок от прошлой отметки до нынешнего места показа. */
+- (void)sendWatchSegmentFinal:(BOOL)final {
+    if (_playerJson == nil || !_watchReported) {
+        return;
+    }
+
+    NSTimeInterval at = CMTimeGetSeconds([_player currentTime]);
+
+    if (!(at > 0)) {
+        at = _watchSegmentFrom;
+    }
+
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    NSTimeInterval spent = MAX(0.0, now - _watchSegmentAt);
+
+    if (!final && at <= _watchSegmentFrom + 0.5) {
+        return;
+    }
+
+    NSDictionary *json = _playerJson;
+    NSTimeInterval from = _watchSegmentFrom;
+
+    _watchSegmentFrom = at;
+    _watchSegmentAt = now;
+
+    YTAsync(^{
+        [YTApi reportWatched:json position:at from:from elapsed:spent final:final];
+    });
+}
+
+/** Запись закрываем: ролик доигран или мы уходим с него. */
+- (void)stopWatchReports:(BOOL)closing {
+    [_watchTimer invalidate];
+    _watchTimer = nil;
+
+    if (closing) {
+        [self sendWatchSegmentFinal:YES];
+    }
+}
+
 - (void)teardownPlayer {
+    [self stopWatchReports:_watchReported];
+
 
     // Ожидание объявленной трансляции плеера не переживает.
     [self stopBroadcastWait];

@@ -307,6 +307,18 @@ typedef enum {
              position:(NSTimeInterval)position;
 
 /**
+ * Отрезок просмотра: `from`…`position`, потраченное время `elapsed`.
+ *
+ * `from` меньше нуля — начало показа: уходит и `playback`, и первый
+ * отрезок. `final` закрывает запись: больше по этому показу ничего.
+ */
++ (void)reportWatched:(NSDictionary *)playerResponse
+             position:(NSTimeInterval)position
+                 from:(NSTimeInterval)from
+              elapsed:(NSTimeInterval)elapsed
+                final:(BOOL)final;
+
+/**
  * Подписка на канал и отказ от неё — порт `SetChannelSubscriptionAsync`.
  *
  * Клиент TVHTML5 с токеном QR-кода: та же пара, которой ходит всё

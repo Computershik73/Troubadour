@@ -4563,6 +4563,29 @@ static NSString *YTBase64(NSData *data) {
 
 + (void)reportWatched:(NSDictionary *)playerResponse
              position:(NSTimeInterval)position {
+    [self reportWatched:playerResponse
+               position:position
+                   from:-1
+                elapsed:0
+                  final:NO];
+}
+
+/**
+ * Отрезок просмотра: отсюда, досюда, столько прошло.
+ *
+ * Настоящий TV-клиент не отмечает ролик одной точкой — он ведёт
+ * непрерывную запись. В дампе yttv5 пятнадцать обращений к `watchtime`
+ * за сессию: первые три через десять секунд, дальше через сорок, и в
+ * каждом `st` равен `et` предыдущего. Так сервер складывает из отрезков
+ * всю дорожку просмотра, а не одну отметку у нулевой секунды.
+ *
+ * `from` меньше нуля означает «отрезка нет» — начало показа.
+ */
++ (void)reportWatched:(NSDictionary *)playerResponse
+             position:(NSTimeInterval)position
+                 from:(NSTimeInterval)from
+              elapsed:(NSTimeInterval)elapsed
+                final:(BOOL)final {
     if (![YTAuth isSignedIn]) {
         return;
     }
@@ -4600,8 +4623,13 @@ static NSString *YTBase64(NSData *data) {
         [self playbackNonce], [self clientVersion:@"TVHTML5"], [self hl], [self gl]];
 
     NSTimeInterval at = MAX(position, 0.0);
+    BOOL opening = (from < 0);
 
-    if ([playback length] > 0) {
+    /**
+     * Сигнал `playback` — только при начале показа: он открывает запись,
+     * и повторять его на каждом отрезке незачем.
+     */
+    if (opening && [playback length] > 0) {
         [self pingStats:[NSString stringWithFormat:@"%@%@&cmt=%.3f",
             playback, common, at]];
     }
@@ -4612,19 +4640,42 @@ static NSString *YTBase64(NSData *data) {
          * какой отрезок посмотрели. Нулевой отрезок не считается,
          * поэтому у самого начала берётся секунда.
          */
-        NSTimeInterval end = (at > 0) ? at : 1.0;
+        NSTimeInterval begin = opening ? 0.0 : MAX(from, 0.0);
+        NSTimeInterval end = MAX(at, begin);
+
+        if (opening && end <= begin) {
+            end = begin + 1.0;
+        }
+
+        NSTimeInterval spent = opening ? end : MAX(elapsed, 0.0);
 
         NSMutableString *url = [NSMutableString stringWithFormat:
-            @"%@%@&cmt=%.3f&st=0&et=%.3f&rt=%.3f", watchtime, common, at, end, end];
+            @"%@%@&cmt=%.3f&st=%.3f&et=%.3f&rt=%.3f",
+            watchtime, common, at, begin, end, spent];
 
         if (length > 0) {
             [url appendFormat:@"&len=%.3f", length];
         }
 
+        /**
+         * `final=1` у последнего отрезка.
+         *
+         * В дампе его нет, и это не довод против: дамп снят с эфира,
+         * который не кончается, — там все пятнадцать обращений идут со
+         * `state=playing` и без признака конца. Признак этот у сигналов
+         * YouTube означает «запись закрыта, больше по этому показу
+         * ничего не будет».
+         */
+        if (final) {
+            [url appendString:@"&final=1"];
+        }
+
         [self pingStats:url];
     }
 
-    NSLog(@"[YouTube/История] %@ отмечен на %.0f с", videoId, at);
+    NSLog(@"[YouTube/История] %@: отрезок %.0f…%.0f с, показ на %.0f с%@",
+          videoId, opening ? 0.0 : MAX(from, 0.0), at, at,
+          final ? @", запись закрыта" : @"");
 }
 
 + (NSDictionary *)playerResponse:(NSString *)videoId {
