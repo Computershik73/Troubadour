@@ -485,6 +485,21 @@ static const CGFloat YTPageMargin = 16;
     BOOL _fillsScreen;
 
     /**
+     * Свободное увеличение кадра: во сколько раз и куда сдвинут.
+     *
+     * Единица и ноль означают «как было»: слой без преобразования, и
+     * весь прежний порядок — вписан или растянут — решается одной только
+     * укладкой. Зум поверх неё, а не вместо: растянутый по экрану кадр
+     * тоже можно приблизить.
+     */
+    CGFloat _zoomScale;
+    CGPoint _zoomShift;
+
+    /** С чего начался нынешний жест: масштаб и середина между пальцами. */
+    CGFloat _zoomFrom;
+    CGPoint _zoomAnchor;
+
+    /**
      * Прокрутка страницы, выключенная на время жеста по кадру.
      *
      * Кадр в обычном виде лежит **внутри** прокрутки, и палец, ведущий
@@ -1363,6 +1378,8 @@ static const CGFloat YTPageMargin = 16;
 - (void)zoomed:(UIPinchGestureRecognizer *)gesture {
     if ([gesture state] == UIGestureRecognizerStateBegan) {
         _zoomUsed = NO;
+        _zoomFrom = (_zoomScale > 0) ? _zoomScale : 1.0f;
+        _zoomAnchor = [gesture locationInView:_videoHost];
 
         [self holdPageScroll:YES];
 
@@ -1372,11 +1389,53 @@ static const CGFloat YTPageMargin = 16;
     if ([gesture state] == UIGestureRecognizerStateEnded ||
         [gesture state] == UIGestureRecognizerStateCancelled) {
         [self holdPageScroll:NO];
+        [self settleZoom];
 
         return;
     }
 
     if ([gesture state] != UIGestureRecognizerStateChanged || _zoomUsed) {
+        return;
+    }
+
+    /**
+     * В полном экране пальцы двигают кадр, а не переключают ступени.
+     *
+     * Ступенчатая лестница ниже осталась для окна: развели — развернули.
+     * А когда кадр уже во весь экран, дальше разводить пальцы незачем
+     * ради ещё одной ступени — там начинается обычное увеличение, какое
+     * бывает у картинок: во сколько угодно раз и с перетаскиванием
+     * серединой между пальцами.
+     */
+    if (_fullscreenMode) {
+        CGFloat wanted = _zoomFrom * [gesture scale];
+
+        // Ниже единицы кадр не уменьшаем: под ним чернота, а не страница.
+        CGFloat scale = MAX((CGFloat)1.0, MIN((CGFloat)6.0, wanted));
+
+        CGPoint middle = [gesture locationInView:_videoHost];
+
+        _zoomShift = CGPointMake(_zoomShift.x + middle.x - _zoomAnchor.x,
+                                 _zoomShift.y + middle.y - _zoomAnchor.y);
+        _zoomAnchor = middle;
+        _zoomScale = scale;
+
+        [self applyZoom];
+
+        /**
+         * Свели пальцы, а уменьшать уже некуда — значит просят выйти.
+         *
+         * Тот же жест, что и в окне, и то же условие: сведение на четверть
+         * от начала. Без этого выход из полного экрана пропадал бы, стоило
+         * один раз приблизить кадр.
+         */
+        if (scale <= 1.0f && wanted < 0.75f) {
+            _zoomUsed = YES;
+
+            [self resetZoom];
+            [self fullscreenTapped];
+        }
+
         return;
     }
 
@@ -1423,6 +1482,79 @@ static const CGFloat YTPageMargin = 16;
 // Короткие сообщения показывает `showNotice:` — она уже есть ниже.
 
 /**
+ * Кладёт нынешнее увеличение на слой.
+ *
+ * Преобразованием, а не размером: у слоя с преобразованием `frame`
+ * считается из него же, и укладка, ставящая рамку, стёрла бы зум.
+ * Действия отключаем — иначе каждый шаг жеста Core Animation
+ * проигрывает четверть секунды, и кадр тянется за пальцами с отставанием.
+ */
+- (void)applyZoom {
+    if (_playerLayer == nil) {
+        return;
+    }
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+
+    if (_zoomScale <= 1.0f) {
+        [_playerLayer setAffineTransform:CGAffineTransformIdentity];
+    } else {
+        CGAffineTransform move =
+            CGAffineTransformMakeTranslation(_zoomShift.x, _zoomShift.y);
+
+        [_playerLayer setAffineTransform:
+            CGAffineTransformScale(move, _zoomScale, _zoomScale)];
+    }
+
+    [CATransaction commit];
+}
+
+/** Снимает увеличение целиком — при выходе, смене ролика, новом слое. */
+- (void)resetZoom {
+    _zoomScale = 1.0f;
+    _zoomShift = CGPointZero;
+
+    [self applyZoom];
+}
+
+/**
+ * После жеста подтягивает кадр обратно, если его увели за край.
+ *
+ * Сдвиг копится свободно, пока пальцы на экране: ловить границу на
+ * каждом шаге — значит дёргать кадр под пальцем. А отпустили — кадр
+ * встаёт так, чтобы под ним не было пустоты: дальше половины лишнего
+ * размера уезжать некуда.
+ */
+- (void)settleZoom {
+    if (_zoomScale <= 1.0f) {
+        if (_zoomShift.x != 0 || _zoomShift.y != 0) {
+            _zoomShift = CGPointZero;
+
+            [UIView animateWithDuration:0.2 animations:^{ [self applyZoom]; }];
+        }
+
+        return;
+    }
+
+    CGSize box = [_videoHost bounds].size;
+
+    CGFloat limitX = box.width * (_zoomScale - 1.0f) / 2.0f;
+    CGFloat limitY = box.height * (_zoomScale - 1.0f) / 2.0f;
+
+    CGPoint settled = CGPointMake(MAX(-limitX, MIN(limitX, _zoomShift.x)),
+                                  MAX(-limitY, MIN(limitY, _zoomShift.y)));
+
+    if (settled.x == _zoomShift.x && settled.y == _zoomShift.y) {
+        return;
+    }
+
+    _zoomShift = settled;
+
+    [UIView animateWithDuration:0.2 animations:^{ [self applyZoom]; }];
+}
+
+/**
  * Как кадр укладывается в отведённое место.
  *
  * Спрашивается всякий раз, когда слой заводится заново, — а заводится он
@@ -1434,6 +1566,12 @@ static const CGFloat YTPageMargin = 16;
     return _fillsScreen
         ? AVLayerVideoGravityResizeAspectFill
         : AVLayerVideoGravityResizeAspect;
+}
+
+- (void)toggleFillsScreen {
+    [self hideMenu];
+    [self resetZoom];
+    [self setFillsScreen:!_fillsScreen];
 }
 
 - (void)setFillsScreen:(BOOL)fills {
@@ -4410,6 +4548,8 @@ static NSMutableArray *YTJamItems = nil;
      */
     _fillsScreen = NO;
 
+    [self resetZoom];
+
     [_playerLayer setVideoGravity:[self videoGravity]];
     [_playerLayer setFrame:[_videoHost bounds]];
     [[_videoHost layer] addSublayer:_playerLayer];
@@ -6472,6 +6612,23 @@ static NSMutableArray *YTJamItems = nil;
                                         value:nil
                                        action:^{ [weakSelf openMenuPage:4]; }]];
 
+        /**
+         * Подгон кадра переехал сюда с жеста.
+         *
+         * Прежде третьей ступенью сведения-разведения пальцев было
+         * «растянуть по экрану»; теперь на её месте свободное увеличение,
+         * и точному подгону нужен свой угол. Он того стоит: на глаз
+         * поймать величину, при которой полосы исчезают ровно, а края
+         * обрезаются не больше необходимого, — занятие безнадёжное.
+         */
+        [options addObject:[YTSheetRow command:@"pl_fullscreen"
+                                        title:(_fillsScreen
+            ? YTLoc(@"Вписать кадр целиком")
+            : YTLoc(@"Растянуть кадр по экрану"))
+                                       action:^{
+            [weakSelf toggleFillsScreen];
+        }]];
+
         [options addObject:[YTSheetRow command:@"pl_reload"
                                         title:YTLoc(@"Перезагрузить видео")
                                        action:^{ [weakSelf reloadStream]; }]];
@@ -7068,6 +7225,7 @@ static NSMutableArray *YTJamItems = nil;
      */
     if (!_fullscreenMode) {
         [self setFillsScreen:NO];
+        [self resetZoom];
     }
 
     [_fullscreen setImage:YTDarkIcon(_fullscreenMode ? @"pl_exit_fullscreen" : @"pl_fullscreen")
@@ -7734,7 +7892,22 @@ static const CGFloat YTSplitLeftShare = 0.62;
     CGRect box = [_stage bounds];
 
     [_videoHost setFrame:box];
+
+    /**
+     * Рамку слою ставим без преобразования, а потом возвращаем его.
+     *
+     * `frame` у слоя с преобразованием — величина вычисляемая, и запись
+     * в неё при живом зуме съехала бы и по размеру, и по месту.
+     */
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+
+    [_playerLayer setAffineTransform:CGAffineTransformIdentity];
     [_playerLayer setFrame:box];
+
+    [CATransaction commit];
+
+    [self applyZoom];
     [_overlay setFrame:box];
 
     [self layoutSubtitles];
