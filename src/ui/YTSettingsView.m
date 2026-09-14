@@ -11,6 +11,8 @@
 #import "YTAppIconView.h"
 #import "YTSettings.h"
 #import "YTStreams.h"
+#import "YTSkin.h"
+#import "YTSkinView.h"
 #import "YTTheme.h"
 #import "YTUpdate.h"
 #import "YTUpdatePrompt.h"
@@ -722,6 +724,7 @@ static const CGFloat YTSheetOption = 42;
     YTSettingsRow *_interfaceLanguage;
     YTSettingsRow *_language;
     YTSettingsRow *_theme;
+    YTSettingsRow *_skin;
     YTSettingsRow *_appIcon;
     YTSettingsRow *_quality;
     YTSettingsRow *_delivery;
@@ -895,6 +898,17 @@ static const CGFloat YTSheetOption = 42;
 
     /** Оформление. */
     [self sectionTitled:YTLoc(@"Оформление")];
+
+    /**
+     * Оформление — вторая ось рядом с темой.
+     *
+     * Тема отвечает «светло или темно», оформление — «как нарисовано»,
+     * и выбираются они независимо. Строка ведёт на свою страницу:
+     * список названий тут бесполезен, выбирать надо глазами.
+     */
+    _skin = [self rowWithIcon:@"theme" label:YTLoc(@"Оформление") action:^{
+        [YTNav push:[[YTSkinViewController alloc] init]];
+    }];
 
     _theme = [self rowWithIcon:@"theme" label:YTLoc(@"Тема") action:^{
         [weakSelf pickTheme];
@@ -1127,6 +1141,9 @@ static const CGFloat YTSheetOption = 42;
     [_language setValueText:[YTSettings languageTitle:[YTSettings language]]];
     [_interfaceLanguage setValueText:[self interfaceLanguageTitle]];
     [_theme setValueText:[YTTheme titleForMode:[YTTheme mode]]];
+
+    [_skin setValueText:[YTSkin titleFor:[YTSkin current]]];
+    [_skin setHintText:[YTSkin hintFor:[YTSkin current]]];
     [_quality setValueText:[YTSettings qualityTitle:[YTSettings preferredHeight]]];
     [_delivery setValueText:[YTSettings deliveryTitle:[YTSettings delivery]]];
 

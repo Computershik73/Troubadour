@@ -11,6 +11,7 @@
 #import "YTRoundedImageView.h"
 #import "YTSettings.h"
 #import "YTSimpleScreens.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 #import "YTUtil.h"
 
@@ -510,7 +511,15 @@
     [_searchIcon setImage:YTIcon(@"search")];
     [_notificationsIcon setImage:YTIcon(@"notifications")];
 
-    [_tabBar setBackgroundColor:[YTTheme background]];
+    /**
+     * Полоса вкладок красится оформлением, а не цветом напрямую.
+     *
+     * У плоского это тот же фон, что и был; у объёмного — градиент
+     * со светлой волосяной линией сверху. Рисунок готовится под высоту
+     * полосы, поэтому зовётся и отсюда, и из раскладки: до неё высоты
+     * ещё нет.
+     */
+    [YTSkin paintBar:_tabBar];
     [_tabBarDivider setBackgroundColor:[YTTheme divider]];
 
     for (YTTabButton *button in _tabs) {
@@ -575,7 +584,7 @@
     [_tabBar setFrame:CGRectMake(0, tabTop, bounds.size.width, YTTabBarHeight)];
 
     [_tabBarDivider setHidden:NO];
-    [_tabBar setBackgroundColor:[YTTheme background]];
+    [YTSkin paintBar:_tabBar];
 
     /**
      * Скрытая вкладка не занимает места, но и не сдвигает номера.
