@@ -57,6 +57,11 @@ static const CGFloat YTHistoryThumb = 90;
     /** Ссылка на превью и признак того, что за ним уже ходили. */
     NSString *_thumbUrl;
     BOOL _thumbAsked;
+
+    /** Полоска просмотра — та же, что на карточках ленты. */
+    UIView *_watchedTrack;
+    UIView *_watchedFill;
+    double _watchedShare;
 }
 
 - (id)initWithFrame:(CGRect)frame {
@@ -78,6 +83,14 @@ static const CGFloat YTHistoryThumb = 90;
     _badgePill = [[YTPillView alloc] initWithFrame:CGRectZero];
     [_badgePill setCornerRadius:4];
     [self addSubview:_badgePill];
+
+    _watchedTrack = [[UIView alloc] initWithFrame:CGRectZero];
+    [_watchedTrack setUserInteractionEnabled:NO];
+    [self addSubview:_watchedTrack];
+
+    _watchedFill = [[UIView alloc] initWithFrame:CGRectZero];
+    [_watchedFill setUserInteractionEnabled:NO];
+    [self addSubview:_watchedFill];
 
     _badge = YTLabel(YTFontSemiBold(10), [UIColor whiteColor], 1);
     [_badge setTextAlignment:NSTextAlignmentCenter];
@@ -116,6 +129,10 @@ static const CGFloat YTHistoryThumb = 90;
 
     // `Background="#D1000000"` — плашка здесь чуть плотнее, чем в ленте.
     [_badgePill setFillColor:[UIColor colorWithWhite:0 alpha:0.82]];
+
+    // Цвета полоски — те же, что в ленте: серая дорожка, красная доля.
+    [_watchedTrack setBackgroundColor:[UIColor colorWithWhite:1 alpha:0.28]];
+    [_watchedFill setBackgroundColor:YTColor(0xFF0000)];
 }
 
 - (void)bind:(YTVideoItem *)item {
@@ -147,6 +164,16 @@ static const CGFloat YTHistoryThumb = 90;
 
     [_badge setHidden:!hasDuration];
     [_badgePill setHidden:!hasDuration];
+
+    /**
+     * Доля просмотра: у подборок её не бывает, и полоска там читалась бы
+     * как «досмотрено до половины» у того, что не смотрят целиком.
+     */
+    _watchedShare = (item.isLive || [item isPlaylist])
+        ? 0 : MAX(0.0, item.watchedShare);
+
+    [_watchedTrack setHidden:(_watchedShare <= 0)];
+    [_watchedFill setHidden:(_watchedShare <= 0)];
 
     /**
      * Превью здесь не запрашивается — только запоминается.
@@ -191,6 +218,16 @@ static const CGFloat YTHistoryThumb = 90;
 
     [_badgePill setFrame:badge];
     [_badge setFrame:badge];
+
+    // Полоска — по нижнему краю превью, в четыре точки, как в ленте.
+    if (![_watchedTrack isHidden]) {
+        CGFloat bar = 4;
+        CGFloat top = YTHistoryThumb - bar;
+
+        [_watchedTrack setFrame:CGRectMake(0, top, YTHistoryCard, bar)];
+        [_watchedFill setFrame:CGRectMake(0, top,
+            (CGFloat)(YTHistoryCard * _watchedShare), bar)];
+    }
 
     // `Margin="0,6,0,0"` у названия и `0,3,0,0` у подписи под ним.
     [_title setFrame:CGRectMake(0, YTHistoryThumb + 6, YTHistoryCard, 34)];

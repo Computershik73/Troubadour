@@ -59,6 +59,18 @@ static const CGFloat YTHiDayHeight = 18 + 10;
     UILabel *_badge;
     UILabel *_title;
     UILabel *_subtitle;
+
+    /**
+     * Полоска просмотра — та же, что на карточках ленты.
+     *
+     * Здесь она уместнее всего: история — это и есть список того, что
+     * начато и брошено, и «докуда досмотрел» тут первый вопрос. А доля
+     * приходит в том же ответе, что и сама запись: отдельного запроса
+     * не нужно.
+     */
+    UIView *_watchedTrack;
+    UIView *_watchedFill;
+    double _watchedShare;
 }
 
 /** Ширина колонки с текстом при заданной ширине карточки. */
@@ -103,6 +115,14 @@ static const CGFloat YTHiDayHeight = 18 + 10;
     _subtitle = YTLabel(YTFontRegular(12), [YTTheme secondaryText], 1);
     [self addSubview:_subtitle];
 
+    _watchedTrack = [[UIView alloc] initWithFrame:CGRectZero];
+    [_watchedTrack setUserInteractionEnabled:NO];
+    [self addSubview:_watchedTrack];
+
+    _watchedFill = [[UIView alloc] initWithFrame:CGRectZero];
+    [_watchedFill setUserInteractionEnabled:NO];
+    [self addSubview:_watchedFill];
+
     __weak YTHistoryCard *weakSelf = self;
 
     [self setOnTap:^{
@@ -125,6 +145,10 @@ static const CGFloat YTHiDayHeight = 18 + 10;
 
     // `Background="#D1000000"` у плашки в History.xaml — плотнее, чем в ленте.
     [_badgePill setFillColor:[UIColor colorWithWhite:0 alpha:0.82]];
+
+    // Цвета полоски — те же, что в ленте: серая дорожка, красная доля.
+    [_watchedTrack setBackgroundColor:[UIColor colorWithWhite:1 alpha:0.28]];
+    [_watchedFill setBackgroundColor:YTColor(0xFF0000)];
 }
 
 - (void)bind:(YTVideoItem *)item {
@@ -141,6 +165,16 @@ static const CGFloat YTHiDayHeight = 18 + 10;
 
     [_badge setHidden:!hasDuration];
     [_badgePill setHidden:!hasDuration];
+
+    /**
+     * Доля просмотра: у эфиров и подборок её не бывает, и полоска там
+     * читалась бы как «досмотрено до половины» у того, что не смотрят.
+     */
+    _watchedShare = (item.isLive || [item.playlistId length] > 0)
+        ? 0 : MAX(0.0, item.watchedShare);
+
+    [_watchedTrack setHidden:(_watchedShare <= 0)];
+    [_watchedFill setHidden:(_watchedShare <= 0)];
 
     /**
      * Превью только запоминается: история приходит страницами по полтора
@@ -183,6 +217,16 @@ static const CGFloat YTHiDayHeight = 18 + 10;
 
     [_badgePill setFrame:badge];
     [_badge setFrame:badge];
+
+    // Полоска — по нижнему краю превью, в четыре точки, как в ленте.
+    if (![_watchedTrack isHidden]) {
+        CGFloat bar = 4;
+        CGFloat top = YTHiThumbHeight - bar;
+
+        [_watchedTrack setFrame:CGRectMake(0, top, YTHiThumbWidth, bar)];
+        [_watchedFill setFrame:CGRectMake(0, top,
+            (CGFloat)(YTHiThumbWidth * _watchedShare), bar)];
+    }
 
     CGFloat left = YTHiThumbWidth + YTHiGap;
     CGFloat textWidth = width - left;
