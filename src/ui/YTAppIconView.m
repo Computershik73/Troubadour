@@ -75,7 +75,7 @@
 
     [[_back titleLabel] setFont:YTFontRegular(24)];
     [_back setTitle:@"‹" forState:UIControlStateNormal];
-    [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];
+    [_back setTitleColor:[YTTheme barText] forState:UIControlStateNormal];
     [_back addTarget:self action:@selector(goBack)
     forControlEvents:UIControlEventTouchUpInside];
     [_bar addSubview:_back];
@@ -206,7 +206,7 @@
     [YTSkin paintBar:_bar];
 
     [_heading setTextColor:[YTTheme primaryText]];
-    [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];
+    [_back setTitleColor:[YTTheme barText] forState:UIControlStateNormal];
 
     [_name setTextColor:[YTTheme primaryText]];
     [_name setBackgroundColor:[YTTheme surface]];
@@ -442,7 +442,7 @@
 
     [[_back titleLabel] setFont:YTFontRegular(24)];
     [_back setTitle:@"‹" forState:UIControlStateNormal];
-    [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];
+    [_back setTitleColor:[YTTheme barText] forState:UIControlStateNormal];
     [_back addTarget:self action:@selector(goBack)
     forControlEvents:UIControlEventTouchUpInside];
     [_bar addSubview:_back];

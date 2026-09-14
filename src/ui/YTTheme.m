@@ -220,10 +220,18 @@ UIColor *YTColor(uint32_t argb) {
     return YTColor(0xCC000000);
 }
 
++ (UIColor *)barText {
+    return [YTSkin isClassic] ? YTColor(0xF5F5F5) : [self primaryText];
+}
+
 + (UIStatusBarStyle)statusBarStyle {
     // На тёмном фоне нужны светлые значки. UIStatusBarStyleLightContent
     // существует с iOS 5.0 — ровно с нашей нижней границы.
-    return [self isDark] ? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
+    //
+    // У объёмного оформления полоса тёмная в обеих темах — значит и
+    // значки системы над ней всегда светлые.
+    return ([self isDark] || [YTSkin isClassic])
+        ? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
 }
 
 @end

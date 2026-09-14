@@ -275,6 +275,18 @@ static NSMutableDictionary *YTSkinCache(void) {
             @"subscriptions_guide_selected", @"tab_home_on",
             @"people_guide", @"tab_subs",
             @"people_guide_selected", @"tab_subs_on",
+
+            /**
+             * Вертикальных роликов в ту пору не было, колокольчика тоже.
+             *
+             * Ближайшее по смыслу для Shorts — «Кино и анимация»:
+             * хлопушка. Уведомлениям в наборе не отвечает ничего, и
+             * подставлять им красную точку или пузырь значило бы менять
+             * смысл значка ради вида. Такие значки остаются нашими,
+             * но получают рельеф — см. `embossed:`.
+             */
+            @"entertainment_guide", @"tab_shorts",
+            @"entertainment_guide_selected", @"tab_shorts_on",
             @"account_guide", @"tab_you",
             @"account_guide_selected", @"tab_you_on",
             @"history_guide", @"pl_download",
@@ -370,6 +382,49 @@ static NSMutableDictionary *YTSkinCache(void) {
                       (CGFloat)(maxY - minY + 1) * scaleY);
 }
 
+/**
+ * Наш плоский значок с рельефом — для того, чему в наборе нет пары.
+ *
+ * Приём той поры: сам рисунок тёмный, а под ним, со сдвигом в точку
+ * вниз, его же светлая тень. Получается вдавленность — то же, чем
+ * отличались значки разделов в наборе. Так колокольчик и прочее
+ * новьё перестаёт выпадать из ряда.
+ */
++ (UIImage *)embossed:(UIImage *)flat {
+    CGSize size = [flat size];
+
+    if (size.width <= 0 || size.height <= 0) {
+        return flat;
+    }
+
+    BOOL night = [YTTheme isDark];
+
+    CGFloat scale = [[UIScreen mainScreen] respondsToSelector:@selector(scale)]
+        ? [[UIScreen mainScreen] scale] : 1.0;
+
+    UIGraphicsBeginImageContextWithOptions(size, NO, scale);
+
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    // Светлая тень снизу.
+    CGContextSaveGState(context);
+    CGContextTranslateCTM(context, 0, 1);
+    CGContextSetAlpha(context, night ? 0.45 : 0.75);
+    [YTTintedImage(flat, night ? YTColor(0x8A8A8A) : YTColor(0xFFFFFF))
+        drawInRect:CGRectMake(0, 0, size.width, size.height)];
+    CGContextRestoreGState(context);
+
+    // И сам рисунок поверх.
+    [YTTintedImage(flat, night ? YTColor(0xE8E8E8) : YTColor(0x3C3C3C))
+        drawInRect:CGRectMake(0, 0, size.width, size.height)];
+
+    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+
+    UIGraphicsEndImageContext();
+
+    return result ?: flat;
+}
+
 + (UIImage *)iconNamed:(NSString *)name dark:(BOOL)dark {
     if (![self isClassic] || [name length] == 0) {
         return nil;
@@ -377,8 +432,34 @@ static NSMutableDictionary *YTSkinCache(void) {
 
     NSString *theirs = [[self iconMap] objectForKey:name];
 
+    /**
+     * Пары нет — берём свой значок и даём ему рельеф.
+     *
+     * Иначе рядом с выпуклыми значками набора наши плоские выглядели бы
+     * заплатой; а подменять их чужими по принципу «похоже» — менять
+     * смысл ради вида.
+     */
     if (theirs == nil) {
-        return nil;
+        NSString *key = [NSString stringWithFormat:@"~%@|%d", name, dark ? 1 : 0];
+
+        @synchronized (YTSkinCache()) {
+            id kept = [YTSkinCache() objectForKey:key];
+
+            if (kept != nil) {
+                return (kept == [NSNull null]) ? nil : kept;
+            }
+        }
+
+        UIImage *flat = YTImage([name stringByAppendingString:
+            (dark ? @"_dark" : @"_light")]);
+
+        UIImage *relief = (flat != nil) ? [self embossed:flat] : nil;
+
+        @synchronized (YTSkinCache()) {
+            [YTSkinCache() setObject:(relief ?: (id)[NSNull null]) forKey:key];
+        }
+
+        return relief;
     }
 
     NSString *key = [NSString stringWithFormat:@"%@|%d", name, dark ? 1 : 0];
@@ -618,7 +699,22 @@ static NSMutableDictionary *YTSkinCache(void) {
      * надо, а мы оставляем себе только скруглённый обрез, чтобы углы
      * совпали с нашими.
      */
-    UIImage *ready = [self assetNamed:(dark ? @"button_dark" : @"button_light")];
+    /**
+     * Светлая кнопка под тёмной подписью — и наоборот.
+     *
+     * В наборе две кнопки: `button_light` почти белая, `button_dark`
+     * почти чёрная. Выбирать между ними по одному лишь «нажата или нет»
+     * нельзя: в тёмной теме подпись белая, и на белой кнопке её
+     * не видно — ровно это и вышло с таблетками категорий.
+     *
+     * Правило простое: обычная кнопка повторяет тему, выбранная —
+     * спорит с ней. Тогда подпись, которая у выбранной всегда обратного
+     * цвета, остаётся читаемой в обоих случаях.
+     */
+    BOOL night = [YTTheme isDark];
+    BOOL wantDark = (night != dark);
+
+    UIImage *ready = [self assetNamed:(wantDark ? @"button_dark" : @"button_light")];
 
     CGContextSaveGState(context);
     [self pathInContext:context box:box radius:radius];
@@ -640,15 +736,8 @@ static NSMutableDictionary *YTSkinCache(void) {
      * и тёмная кайма кругом — три приёма, из которых и складывается
      * выпуклость в этом оформлении.
      */
-    BOOL night = [YTTheme isDark];
-
-    UIColor *top = dark
-        ? (night ? YTColor(0x5A5A5A) : YTColor(0x8A9099))
-        : (night ? YTColor(0x4A4A4A) : YTColor(0xFDFDFD));
-
-    UIColor *bottom = dark
-        ? (night ? YTColor(0x2E2E2E) : YTColor(0x5A616B))
-        : (night ? YTColor(0x232323) : YTColor(0xD2D7DE));
+    UIColor *top = wantDark ? YTColor(0x5A5A5A) : YTColor(0xFDFDFD);
+    UIColor *bottom = wantDark ? YTColor(0x232323) : YTColor(0xD2D7DE);
 
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
 
@@ -677,7 +766,7 @@ static NSMutableDictionary *YTSkinCache(void) {
 
     CGContextSetLineWidth(context, hair);
     CGContextSetStrokeColorWithColor(context,
-        [(night ? YTColor(0x111111) : YTColor(0x8A8F96)) CGColor]);
+        [(wantDark ? YTColor(0x111111) : YTColor(0x8A8F96)) CGColor]);
     CGContextStrokePath(context);
     CGContextRestoreGState(context);
 

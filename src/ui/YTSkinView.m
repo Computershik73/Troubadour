@@ -172,8 +172,8 @@
 
     [YTSkin paintBar:_bar];
 
-    [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];
-    [_barTitle setTextColor:[YTTheme primaryText]];
+    [_back setTitleColor:[YTTheme barText] forState:UIControlStateNormal];
+    [_barTitle setTextColor:[YTTheme barText]];
 
     NSArray *options = [YTSkin options];
     NSString *now = [YTSkin current];

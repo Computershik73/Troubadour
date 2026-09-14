@@ -302,7 +302,7 @@ static const CGFloat YTHiDayHeight = 18 + 10;
     _back = [UIButton buttonWithType:UIButtonTypeCustom];
     [[_back titleLabel] setFont:YTFontRegular(24)];
     [_back setTitle:@"‹" forState:UIControlStateNormal];
-    [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];
+    [_back setTitleColor:[YTTheme barText] forState:UIControlStateNormal];
     [_back addTarget:self action:@selector(goBack) forControlEvents:UIControlEventTouchUpInside];
     [_bar addSubview:_back];
 

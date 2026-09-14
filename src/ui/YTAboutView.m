@@ -197,7 +197,7 @@
     [[self view] setBackgroundColor:[YTTheme background]];
 
     [YTSkin paintBar:_bar];
-    [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];
+    [_back setTitleColor:[YTTheme barText] forState:UIControlStateNormal];
 }
 
 - (void)goBack {

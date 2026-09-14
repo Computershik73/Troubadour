@@ -1119,8 +1119,8 @@ static const CGFloat YTSheetOption = 42;
     [YTSkin paintBar:_bar];
     [_page setBackgroundColor:[YTTheme background]];
 
-    [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];
-    [_pageTitle setTextColor:[YTTheme primaryText]];
+    [_back setTitleColor:[YTTheme barText] forState:UIControlStateNormal];
+    [_pageTitle setTextColor:[YTTheme barText]];
 
     for (id piece in _pieces) {
         if ([piece isKindOfClass:[UILabel class]]) {
