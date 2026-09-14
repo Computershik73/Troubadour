@@ -262,10 +262,19 @@ static NSMutableDictionary *YTSkinCache(void) {
             @"search", @"search",
             @"search_voice", @"microphone",
             @"logo", @"ytlogo",
-            @"popular_guide", @"tab_home",
-            @"popular_guide_selected", @"tab_home_on",
-            @"subscriptions_guide", @"tab_subs",
-            @"subscriptions_guide_selected", @"tab_subs_on",
+            /**
+             * Домик в наборе зовётся `subscriptions_guide`.
+             *
+             * Имя обманчиво, а рисунок нет: там домик, и это «Главная».
+             * Я поверил имени и поставил домик подпискам, а звёздочку
+             * «Популярное» — главной; на экране они и оказались наоборот.
+             * Подпискам достались двое — `people_guide`: ближе по смыслу
+             * в этом наборе ничего нет.
+             */
+            @"subscriptions_guide", @"tab_home",
+            @"subscriptions_guide_selected", @"tab_home_on",
+            @"people_guide", @"tab_subs",
+            @"people_guide_selected", @"tab_subs_on",
             @"account_guide", @"tab_you",
             @"account_guide_selected", @"tab_you_on",
             @"history_guide", @"pl_download",
@@ -276,6 +285,89 @@ static NSMutableDictionary *YTSkinCache(void) {
     });
 
     return map;
+}
+
+/**
+ * Прямоугольник непустой части картинки.
+ *
+ * Считается по прозрачности: рисуем картинку в свой холст и ищем крайние
+ * точки, где что-то есть. Холст берём небольшой — до сорока точек по
+ * длинной стороне: нам нужны границы, а не подробности, и лишние
+ * мегапиксели здесь только время.
+ */
++ (CGRect)inkBoundsOf:(UIImage *)image {
+    CGSize size = [image size];
+
+    if (size.width <= 0 || size.height <= 0) {
+        return CGRectMake(0, 0, 1, 1);
+    }
+
+    CGFloat step = MAX(size.width, size.height) / 40.0;
+
+    if (step < 1.0) {
+        step = 1.0;
+    }
+
+    NSUInteger width = (NSUInteger)ceil(size.width / step);
+    NSUInteger height = (NSUInteger)ceil(size.height / step);
+
+    if (width == 0 || height == 0) {
+        return CGRectMake(0, 0, size.width, size.height);
+    }
+
+    NSMutableData *pixels = [NSMutableData dataWithLength:width * height * 4];
+
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+
+    CGContextRef context = CGBitmapContextCreate([pixels mutableBytes],
+        width, height, 8, width * 4, space,
+        kCGImageAlphaPremultipliedLast);
+
+    CGColorSpaceRelease(space);
+
+    if (context == NULL) {
+        return CGRectMake(0, 0, size.width, size.height);
+    }
+
+    CGContextDrawImage(context, CGRectMake(0, 0, width, height), [image CGImage]);
+    CGContextRelease(context);
+
+    const unsigned char *bytes = (const unsigned char *)[pixels bytes];
+
+    NSInteger minX = (NSInteger)width;
+    NSInteger minY = (NSInteger)height;
+    NSInteger maxX = -1;
+    NSInteger maxY = -1;
+
+    for (NSUInteger y = 0; y < height; y++) {
+        for (NSUInteger x = 0; x < width; x++) {
+            if (bytes[(y * width + x) * 4 + 3] <= 8) {
+                continue;
+            }
+
+            if ((NSInteger)x < minX) { minX = (NSInteger)x; }
+            if ((NSInteger)x > maxX) { maxX = (NSInteger)x; }
+            if ((NSInteger)y < minY) { minY = (NSInteger)y; }
+            if ((NSInteger)y > maxY) { maxY = (NSInteger)y; }
+        }
+    }
+
+    // Пусто целиком — вернём всё: обрезать нечего.
+    if (maxX < minX || maxY < minY) {
+        return CGRectMake(0, 0, size.width, size.height);
+    }
+
+    /**
+     * Холст рисуется снизу вверх, а нам нужны точки сверху вниз.
+     */
+    CGFloat scaleX = size.width / (CGFloat)width;
+    CGFloat scaleY = size.height / (CGFloat)height;
+
+    CGFloat top = (CGFloat)((NSInteger)height - 1 - maxY) * scaleY;
+
+    return CGRectMake((CGFloat)minX * scaleX, top,
+                      (CGFloat)(maxX - minX + 1) * scaleX,
+                      (CGFloat)(maxY - minY + 1) * scaleY);
 }
 
 + (UIImage *)iconNamed:(NSString *)name dark:(BOOL)dark {
@@ -337,31 +429,48 @@ static NSMutableDictionary *YTSkinCache(void) {
         return found;
     }
 
-    if (fabs([found size].width - want.width) < 0.5 &&
-        fabs([found size].height - want.height) < 0.5) {
-        @synchronized (YTSkinCache()) {
-            [YTSkinCache() setObject:found forKey:key];
-        }
-
-        return found;
-    }
-
     CGFloat scale = [[UIScreen mainScreen] respondsToSelector:@selector(scale)]
         ? [[UIScreen mainScreen] scale] : 1.0;
+
+    /**
+     * Пустые поля вокруг рисунка срезаем.
+     *
+     * У значков набора вокруг самого рисунка остаётся прозрачная кайма —
+     * иногда в треть размера. Вписав такой значок в наше место целиком,
+     * мы вписываем вместе с каймой, и рисунок выходит заметно мельче
+     * соседних: ровно это и было видно на полосе вкладок.
+     */
+    CGRect ink = [self inkBoundsOf:found];
 
     UIGraphicsBeginImageContextWithOptions(want, NO, scale);
 
     // Вписываем целиком, сохраняя пропорции: иначе квадратный значок
     // в прямоугольном месте растянулся бы.
-    CGFloat ratio = MIN(want.width / [found size].width,
-                        want.height / [found size].height);
+    CGFloat ratio = MIN(want.width / ink.size.width,
+                        want.height / ink.size.height);
 
-    CGSize fit = CGSizeMake(floor([found size].width * ratio),
-                            floor([found size].height * ratio));
+    CGSize fit = CGSizeMake(floor(ink.size.width * ratio),
+                            floor(ink.size.height * ratio));
 
-    [found drawInRect:CGRectMake(floor((want.width - fit.width) / 2),
-                                 floor((want.height - fit.height) / 2),
-                                 fit.width, fit.height)];
+    CGFloat left = floor((want.width - fit.width) / 2);
+    CGFloat top = floor((want.height - fit.height) / 2);
+
+    /**
+     * Рисуем всю картинку, но сдвинутой и увеличенной так, чтобы на месте
+     * оказалась именно её непустая часть: обрезать саму картинку дороже,
+     * а результат тот же.
+     */
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    CGContextSaveGState(context);
+    CGContextClipToRect(context, CGRectMake(left, top, fit.width, fit.height));
+
+    [found drawInRect:CGRectMake(left - ink.origin.x * ratio,
+                                 top - ink.origin.y * ratio,
+                                 [found size].width * ratio,
+                                 [found size].height * ratio)];
+
+    CGContextRestoreGState(context);
 
     UIImage *sized = UIGraphicsGetImageFromCurrentImageContext();
 
@@ -469,6 +578,142 @@ static NSMutableDictionary *YTSkinCache(void) {
     [backing setNeedsDisplay];
 
     [view setBackgroundColor:[YTTheme surface]];
+}
+
+/**
+ * Скруглённый путь — общий для плашек и карточек.
+ */
++ (void)pathInContext:(CGContextRef)context box:(CGRect)box radius:(CGFloat)radius {
+    CGFloat r = MIN(radius, MIN(box.size.width, box.size.height) / 2);
+
+    CGContextBeginPath(context);
+    CGContextMoveToPoint(context, CGRectGetMinX(box) + r, CGRectGetMinY(box));
+    CGContextAddArcToPoint(context, CGRectGetMaxX(box), CGRectGetMinY(box),
+                           CGRectGetMaxX(box), CGRectGetMaxY(box), r);
+    CGContextAddArcToPoint(context, CGRectGetMaxX(box), CGRectGetMaxY(box),
+                           CGRectGetMinX(box), CGRectGetMaxY(box), r);
+    CGContextAddArcToPoint(context, CGRectGetMinX(box), CGRectGetMaxY(box),
+                           CGRectGetMinX(box), CGRectGetMinY(box), r);
+    CGContextAddArcToPoint(context, CGRectGetMinX(box), CGRectGetMinY(box),
+                           CGRectGetMaxX(box), CGRectGetMinY(box), r);
+    CGContextClosePath(context);
+}
+
++ (BOOL)drawRaisedInRect:(CGRect)box radius:(CGFloat)radius dark:(BOOL)dark {
+    if (![self isClassic] || box.size.width <= 0 || box.size.height <= 0) {
+        return NO;
+    }
+
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    if (context == NULL) {
+        return NO;
+    }
+
+    /**
+     * Готовая кнопка набора — если её принесли.
+     *
+     * `button_light` и `button_dark` нарисованы тянущимися: середина
+     * ровная, торцы свои. Отдаём их UIKit целиком — он и растянет как
+     * надо, а мы оставляем себе только скруглённый обрез, чтобы углы
+     * совпали с нашими.
+     */
+    UIImage *ready = [self assetNamed:(dark ? @"button_dark" : @"button_light")];
+
+    CGContextSaveGState(context);
+    [self pathInContext:context box:box radius:radius];
+    CGContextClip(context);
+
+    if (ready != nil) {
+        CGFloat cap = floor([ready size].width / 2);
+
+        [[ready stretchableImageWithLeftCapWidth:cap topCapHeight:0]
+            drawInRect:box];
+
+        CGContextRestoreGState(context);
+
+        return YES;
+    }
+
+    /**
+     * Своего рисунка: отлив сверху вниз, светлая линия по верхней кромке
+     * и тёмная кайма кругом — три приёма, из которых и складывается
+     * выпуклость в этом оформлении.
+     */
+    BOOL night = [YTTheme isDark];
+
+    UIColor *top = dark
+        ? (night ? YTColor(0x5A5A5A) : YTColor(0x8A9099))
+        : (night ? YTColor(0x4A4A4A) : YTColor(0xFDFDFD));
+
+    UIColor *bottom = dark
+        ? (night ? YTColor(0x2E2E2E) : YTColor(0x5A616B))
+        : (night ? YTColor(0x232323) : YTColor(0xD2D7DE));
+
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+
+    NSArray *colors = [NSArray arrayWithObjects:
+        (id)[top CGColor], (id)[bottom CGColor], nil];
+
+    CGGradientRef gradient = CGGradientCreateWithColors(space,
+        (__bridge CFArrayRef)colors, NULL);
+
+    CGContextDrawLinearGradient(context, gradient,
+        CGPointMake(0, CGRectGetMinY(box)),
+        CGPointMake(0, CGRectGetMaxY(box)), 0);
+
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(space);
+
+    CGContextRestoreGState(context);
+
+    CGFloat hair = 1.0 / ([[UIScreen mainScreen]
+        respondsToSelector:@selector(scale)] ? [[UIScreen mainScreen] scale] : 1.0);
+
+    CGContextSaveGState(context);
+    [self pathInContext:context
+                    box:CGRectInset(box, hair / 2, hair / 2)
+                 radius:radius];
+
+    CGContextSetLineWidth(context, hair);
+    CGContextSetStrokeColorWithColor(context,
+        [(night ? YTColor(0x111111) : YTColor(0x8A8F96)) CGColor]);
+    CGContextStrokePath(context);
+    CGContextRestoreGState(context);
+
+    return YES;
+}
+
++ (BOOL)drawCardInRect:(CGRect)box {
+    if (![self isClassic] || box.size.width <= 0 || box.size.height <= 0) {
+        return NO;
+    }
+
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    if (context == NULL) {
+        return NO;
+    }
+
+    CGFloat hair = 1.0 / ([[UIScreen mainScreen]
+        respondsToSelector:@selector(scale)] ? [[UIScreen mainScreen] scale] : 1.0);
+
+    CGContextSaveGState(context);
+    [self pathInContext:context box:box radius:6];
+    CGContextSetFillColorWithColor(context, [[YTTheme surface] CGColor]);
+    CGContextFillPath(context);
+    CGContextRestoreGState(context);
+
+    CGContextSaveGState(context);
+    [self pathInContext:context
+                    box:CGRectInset(box, hair / 2, hair / 2)
+                 radius:6];
+    CGContextSetLineWidth(context, hair);
+    CGContextSetStrokeColorWithColor(context, [[YTTheme divider] CGColor]);
+    CGContextStrokePath(context);
+    CGContextRestoreGState(context);
+
+    return YES;
 }
 
 + (void)paintRaised:(UIView *)view radius:(CGFloat)radius {

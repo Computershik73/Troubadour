@@ -260,6 +260,20 @@ static const CGFloat YTSheetOption = 42;
     [_icon setImage:YTIcon(_iconName)];
     [_chevron setImage:YTIcon(@"pl_skip")];
 
+    /**
+     * В объёмном оформлении строка — белая полка на сером фоне.
+     *
+     * Так выглядела групповая таблица той поры: полоса белого, кайма
+     * снизу и серое поле под всем этим. Полоску-разделитель кладём
+     * подложкой, а не отдельным видом: видов в списке настроек и так
+     * по десятку на строку.
+     */
+    if ([YTSkin isClassic]) {
+        [self setBackgroundColor:[YTTheme surface]];
+    } else {
+        [self setBackgroundColor:[UIColor clearColor]];
+    }
+
     [_label setTextColor:[YTTheme primaryText]];
     [_hint setTextColor:[YTTheme secondaryText]];
     [_value setTextColor:[YTTheme secondaryText]];

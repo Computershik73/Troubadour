@@ -487,7 +487,24 @@ UILabel *YTLabel(UIFont *font, UIColor *color, NSInteger lines) {
     // полукруглые торцы, и без этой поправки дуги наложились бы друг на друга.
     CGFloat radius = MIN(_cornerRadius, MIN(box.size.width, box.size.height) / 2);
 
-    CGContextSetFillColorWithColor(context, [(_fillColor ?: [YTTheme surface]) CGColor]);
+    /**
+     * Объёмное оформление рисует таблетку по-своему.
+     *
+     * Точка одна на всё приложение: таблетками нарисованы и категории
+     * на главной, и «Подписаться», и подложка блока комментариев. Тёмной
+     * считаем ту, что залита цветом основного действия, — это выбранная
+     * таблетка и нажатая кнопка.
+     */
+    UIColor *fill = _fillColor ?: [YTTheme surface];
+
+    BOOL pressed = [fill isEqual:[YTTheme primaryActionBackground]]
+                || [fill isEqual:[YTTheme primaryText]];
+
+    if ([YTSkin drawRaisedInRect:box radius:radius dark:pressed]) {
+        return;
+    }
+
+    CGContextSetFillColorWithColor(context, [fill CGColor]);
 
     CGContextBeginPath(context);
     CGContextMoveToPoint(context, CGRectGetMinX(box) + radius, CGRectGetMinY(box));

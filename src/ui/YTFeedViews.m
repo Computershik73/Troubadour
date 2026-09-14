@@ -4,6 +4,7 @@
 #import "YTMetrics.h"
 #import "YTRoundedImageView.h"
 #import "YTSettings.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 #import "YTUtil.h"
 #import "YTVideoItem.h"
@@ -225,6 +226,24 @@ static const CGFloat YTCardTextGap = 4;
      */
     _watchedShare = (item.isLive || [item.playlistId length] > 0)
         ? 0 : MAX(0.0, item.watchedShare);
+
+    /**
+     * В объёмном оформлении карточка — белый лист с каймой.
+     *
+     * На сером фоне страницы она так и читается: лист, лежащий сверху.
+     * Тень не рисуем: на iPhone 4 в прокручиваемом списке каждая тень —
+     * отдельный проход отрисовки, а кайма даёт почти то же за даром.
+     */
+    if ([YTSkin isClassic]) {
+        [self setBackgroundColor:[YTTheme surface]];
+        [[self layer] setCornerRadius:6];
+        [[self layer] setBorderWidth:1];
+        [[self layer] setBorderColor:[[YTTheme divider] CGColor]];
+    } else {
+        [self setBackgroundColor:[UIColor clearColor]];
+        [[self layer] setCornerRadius:0];
+        [[self layer] setBorderWidth:0];
+    }
 
     [_watchedTrack setBackgroundColor:[UIColor colorWithWhite:1 alpha:0.28]];
     [_watchedFill setBackgroundColor:YTColor(0xFF0000)];
