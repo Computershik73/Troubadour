@@ -5,6 +5,7 @@
 #import "YTHttp.h"
 #import "YTWebAuth.h"
 #import "YTMetrics.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 #import "YTUtil.h"
 
@@ -184,7 +185,7 @@ static void YTUseUserAgent(NSString *agent) {
     [[self view] setBackgroundColor:[YTTheme background]];
 
     _bar = [[UIView alloc] initWithFrame:CGRectZero];
-    [_bar setBackgroundColor:[YTTheme background]];
+    [YTSkin paintBar:_bar];
     [[self view] addSubview:_bar];
 
     _close = [UIButton buttonWithType:UIButtonTypeCustom];

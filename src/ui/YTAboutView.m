@@ -5,6 +5,7 @@
 #import <QuartzCore/QuartzCore.h>
 
 #import "YTMetrics.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 #import "YTUtil.h"
 #import "YTLog.h"
@@ -195,7 +196,7 @@
 - (void)applyTheme {
     [[self view] setBackgroundColor:[YTTheme background]];
 
-    [_bar setBackgroundColor:[YTTheme background]];
+    [YTSkin paintBar:_bar];
     [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];
 }
 

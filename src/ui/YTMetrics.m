@@ -1,6 +1,7 @@
 #import "YTMetrics.h"
 
 #import "YTText.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 
 const CGFloat YTTabBarHeight   = 50;
@@ -176,6 +177,19 @@ UIImage *YTIcon(NSString *name) {
         return nil;
     }
 
+    /**
+     * Оформление вправе подменить значок.
+     *
+     * Точка одна на всё приложение — оттого один набор и меняет весь
+     * облик разом, не трогая ни одного экрана. Нет подмены — берём своё,
+     * как и раньше.
+     */
+    UIImage *skinned = [YTSkin iconNamed:name dark:[YTTheme isDark]];
+
+    if (skinned != nil) {
+        return skinned;
+    }
+
     // Набор выбирается по теме — то же, что делал ThemeAsset.Path в UWP.
     NSString *full = [NSString stringWithFormat:@"%@%@",
                       name, [YTTheme isDark] ? @"_dark" : @"_light"];
@@ -186,6 +200,12 @@ UIImage *YTIcon(NSString *name) {
 UIImage *YTDarkIcon(NSString *name) {
     if ([name length] == 0) {
         return nil;
+    }
+
+    UIImage *skinned = [YTSkin iconNamed:name dark:YES];
+
+    if (skinned != nil) {
+        return skinned;
     }
 
     return YTImage([name stringByAppendingString:@"_dark"]);

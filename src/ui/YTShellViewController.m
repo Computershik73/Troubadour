@@ -493,6 +493,7 @@
 - (void)themeChanged {
     // Набор значков меняется целиком — прежние остались бы чужого цвета.
     YTIconCacheDrop();
+    [YTSkin dropCache];
 
     [self applyTheme];
 
@@ -506,7 +507,7 @@
 - (void)applyTheme {
     [[self view] setBackgroundColor:[YTTheme background]];
 
-    [_navBar setBackgroundColor:[YTTheme background]];
+    [YTSkin paintBar:_navBar];
     [_wordmark setImage:YTIcon(@"ytlogo")];
     [_searchIcon setImage:YTIcon(@"search")];
     [_notificationsIcon setImage:YTIcon(@"notifications")];

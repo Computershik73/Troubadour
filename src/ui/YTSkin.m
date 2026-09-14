@@ -1,5 +1,6 @@
 #import "YTSkin.h"
 
+#import "YTMetrics.h"
 #import "YTStrings.h"
 #import "YTTheme.h"
 
@@ -65,7 +66,49 @@ static UIImage *YTVerticalGradient(CGFloat height,
     return image;
 }
 
+/**
+ * Подобранные значки живут в памяти до смены оформления.
+ *
+ * Спрашивают их на каждой привязке ячейки — по десятку раз на экран
+ * прокрутки, — а стоит подбор недёшево: поиск файла, чтение, перерисовка
+ * под наш размер. Считать это заново на каждый кадр прокрутки нельзя.
+ */
+static NSMutableDictionary *YTSkinCache(void) {
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t once;
+
+    dispatch_once(&once, ^{ cache = [[NSMutableDictionary alloc] init]; });
+
+    return cache;
+}
+
+/**
+ * Подложка полосы: знает только одно — как себя нарисовать.
+ *
+ * Живёт первым подвидом внутри самой полосы и тянется вместе с ней.
+ * `UIViewContentModeRedraw` здесь обязателен: без него UIKit при смене
+ * размера растянул бы прежнюю картинку вместо того, чтобы позвать
+ * рисование заново, и волоски по краям расплылись бы.
+ */
+@interface YTSkinBarBacking : UIView
+@end
+
+@implementation YTSkinBarBacking
+
+- (void)drawRect:(CGRect)rect {
+    [YTSkin drawBarInRect:[self bounds]];
+}
+
+@end
+
+
 @implementation YTSkin
+
++ (void)dropCache {
+    @synchronized (YTSkinCache()) {
+        [YTSkinCache() removeAllObjects];
+    }
+}
 
 + (NSString *)current {
     NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey:YTSkinKey];
@@ -81,6 +124,8 @@ static UIImage *YTVerticalGradient(CGFloat height,
     [[NSUserDefaults standardUserDefaults] synchronize];
 
     NSLog(@"[YouTube/Оформление] Выбрано: %@", [self titleFor:skin]);
+
+    [self dropCache];
 
     [[NSNotificationCenter defaultCenter]
         postNotificationName:YTThemeChangedNotification object:nil];
@@ -137,11 +182,40 @@ static UIImage *YTVerticalGradient(CGFloat height,
     for (NSString *root in roots) {
         NSString *folder = [root stringByAppendingPathComponent:skin];
 
-        NSString *doubled = [folder stringByAppendingPathComponent:
-            [NSString stringWithFormat:@"%@@2x.png", name]];
+        /**
+         * Двойной размер зовётся `_2x`, а не `@2x`.
+         *
+         * Так подписаны файлы в наборе; собачку UIKit подставляет сам
+         * только своим ресурсам, а эти лежат отдельной папкой и ищутся
+         * руками. Обе записи проверяем — набор может прийти и с собачкой.
+         */
+        if (scale > 1.5) {
+            NSArray *doubles = [NSArray arrayWithObjects:
+                [NSString stringWithFormat:@"%@@2x.png", name],
+                [NSString stringWithFormat:@"%@_2x.png", name], nil];
 
-        if (scale > 1.5 && [files fileExistsAtPath:doubled]) {
-            return [UIImage imageWithContentsOfFile:doubled];
+            for (NSString *twice in doubles) {
+                NSString *path = [folder stringByAppendingPathComponent:twice];
+
+                if ([files fileExistsAtPath:path]) {
+                    UIImage *raw = [UIImage imageWithContentsOfFile:path];
+
+                    /**
+                     * Картинку двойного размера надо объявить таковой.
+                     *
+                     * `imageWithContentsOfFile:` считает масштаб по имени,
+                     * а имя тут без собачки — и картинка вышла бы вдвое
+                     * крупнее задуманного.
+                     */
+                    if (raw != nil && [raw respondsToSelector:@selector(CGImage)]) {
+                        return [UIImage imageWithCGImage:[raw CGImage]
+                                                   scale:2.0
+                                             orientation:UIImageOrientationUp];
+                    }
+
+                    return raw;
+                }
+            }
         }
 
         NSString *plain = [folder stringByAppendingPathComponent:
@@ -153,6 +227,153 @@ static UIImage *YTVerticalGradient(CGFloat height,
     }
 
     return nil;
+}
+
+#pragma mark Значки
+
+/**
+ * Чем в наборе зовётся то, что у нас зовётся так.
+ *
+ * Пары подобраны по смыслу, а не по буквам: `tab_you` — это раздел
+ * учётной записи, и в наборе ему отвечает `account_guide`. Чего в наборе
+ * нет вовсе — вертикальных роликов, например, — того здесь и нет:
+ * такой значок останется нашим, и это лучше, чем подставить похожий.
+ */
++ (NSDictionary *)iconMap {
+    static NSDictionary *map = nil;
+    static dispatch_once_t once;
+
+    dispatch_once(&once, ^{
+        map = [NSDictionary dictionaryWithObjectsAndKeys:
+            @"play", @"pl_play",
+            @"pause", @"pl_pause",
+            @"replay", @"pl_replay",
+            @"like_watch", @"pl_like",
+            @"like_watch_selected", @"pl_like_on",
+            @"dislike_watch", @"pl_dislike",
+            @"dislike_watch_selected", @"pl_dislike_on",
+            @"fullscreen_portrait", @"pl_fullscreen",
+            @"smallscreen", @"pl_exit_fullscreen",
+            @"collapse", @"pl_collapse",
+            @"back_arrow", @"pl_back",
+            @"settings_guide", @"pl_settings",
+            @"cc", @"languages",
+            @"action_watch", @"share",
+            @"search", @"search",
+            @"search_voice", @"microphone",
+            @"logo", @"ytlogo",
+            @"popular_guide", @"tab_home",
+            @"popular_guide_selected", @"tab_home_on",
+            @"subscriptions_guide", @"tab_subs",
+            @"subscriptions_guide_selected", @"tab_subs_on",
+            @"account_guide", @"tab_you",
+            @"account_guide_selected", @"tab_you_on",
+            @"history_guide", @"pl_download",
+            @"unsubscribe", @"unsubscribe",
+            @"artist_info", @"info",
+            @"feed_error", @"failed_loading",
+            nil];
+    });
+
+    return map;
+}
+
++ (UIImage *)iconNamed:(NSString *)name dark:(BOOL)dark {
+    if (![self isClassic] || [name length] == 0) {
+        return nil;
+    }
+
+    NSString *theirs = [[self iconMap] objectForKey:name];
+
+    if (theirs == nil) {
+        return nil;
+    }
+
+    NSString *key = [NSString stringWithFormat:@"%@|%d", name, dark ? 1 : 0];
+
+    @synchronized (YTSkinCache()) {
+        id kept = [YTSkinCache() objectForKey:key];
+
+        // Пустышкой отмечаем «искали и не нашли» — иначе искали бы снова.
+        if (kept != nil) {
+            return (kept == [NSNull null]) ? nil : kept;
+        }
+    }
+
+    /**
+     * Светлый и тёмный набор — только там, где он в наборе есть.
+     *
+     * Значков той поры два вида всего у нескольких деталей
+     * (`refresh_light` и `refresh_dark`); остальные одноцветные, и
+     * подставляются в обе темы как есть.
+     */
+    UIImage *found = [self assetNamed:[theirs stringByAppendingString:
+        (dark ? @"_dark" : @"_light")]];
+
+    if (found == nil) {
+        found = [self assetNamed:theirs];
+    }
+
+    if (found == nil) {
+        @synchronized (YTSkinCache()) {
+            [YTSkinCache() setObject:[NSNull null] forKey:key];
+        }
+
+        return nil;
+    }
+
+    /**
+     * Размер — от нашего значка.
+     *
+     * Наш же и спрашиваем: `YTImage` берёт из связки без оглядки на
+     * оформление, так что кольца тут не выйдет.
+     */
+    UIImage *ours = YTImage([name stringByAppendingString:
+        (dark ? @"_dark" : @"_light")]);
+
+    CGSize want = (ours != nil) ? [ours size] : [found size];
+
+    if (want.width <= 0 || want.height <= 0) {
+        return found;
+    }
+
+    if (fabs([found size].width - want.width) < 0.5 &&
+        fabs([found size].height - want.height) < 0.5) {
+        @synchronized (YTSkinCache()) {
+            [YTSkinCache() setObject:found forKey:key];
+        }
+
+        return found;
+    }
+
+    CGFloat scale = [[UIScreen mainScreen] respondsToSelector:@selector(scale)]
+        ? [[UIScreen mainScreen] scale] : 1.0;
+
+    UIGraphicsBeginImageContextWithOptions(want, NO, scale);
+
+    // Вписываем целиком, сохраняя пропорции: иначе квадратный значок
+    // в прямоугольном месте растянулся бы.
+    CGFloat ratio = MIN(want.width / [found size].width,
+                        want.height / [found size].height);
+
+    CGSize fit = CGSizeMake(floor([found size].width * ratio),
+                            floor([found size].height * ratio));
+
+    [found drawInRect:CGRectMake(floor((want.width - fit.width) / 2),
+                                 floor((want.height - fit.height) / 2),
+                                 fit.width, fit.height)];
+
+    UIImage *sized = UIGraphicsGetImageFromCurrentImageContext();
+
+    UIGraphicsEndImageContext();
+
+    UIImage *result = sized ?: found;
+
+    @synchronized (YTSkinCache()) {
+        [YTSkinCache() setObject:result forKey:key];
+    }
+
+    return result;
 }
 
 #pragma mark Рисование
@@ -170,35 +391,23 @@ static UIImage *YTVerticalGradient(CGFloat height,
     *under = dark ? YTColor(0x000000) : YTColor(0x8A8F96);
 }
 
-+ (void)paintBar:(UIView *)view {
-    if (view == nil) {
+/**
+ * Рисует полосу в отведённом прямоугольнике.
+ *
+ * Отдельным методом, потому что рисовать её приходится в двух местах:
+ * на самой полосе и на демо-снимке. Картинка набора — `titlebar` —
+ * растягивается по высоте: рисунок у неё горизонтально однородный,
+ * вертикальный отлив с волосками по краям.
+ */
++ (void)drawBarInRect:(CGRect)box {
+    if (box.size.height <= 0 || box.size.width <= 0) {
         return;
     }
 
-    if (![self isClassic]) {
-        [view setBackgroundColor:[YTTheme background]];
-
-        return;
-    }
-
-    CGFloat height = [view bounds].size.height;
-
-    if (height <= 0) {
-        [view setBackgroundColor:[YTTheme surface]];
-
-        return;
-    }
-
-    /**
-     * Готовая картинка набора — если её принесли.
-     *
-     * Растягивается по середине: у полос той эпохи рисунок был именно
-     * таким — края со своими волосками, середина тянется.
-     */
-    UIImage *ready = [self assetNamed:@"bar"];
+    UIImage *ready = [self assetNamed:@"titlebar"];
 
     if (ready != nil) {
-        [view setBackgroundColor:[UIColor colorWithPatternImage:ready]];
+        [ready drawInRect:box];
 
         return;
     }
@@ -210,11 +419,56 @@ static UIImage *YTVerticalGradient(CGFloat height,
 
     [self barTop:&top bottom:&bottom hair:&hair under:&under];
 
-    UIImage *paint = YTVerticalGradient(height, top, bottom, hair, under);
+    UIImage *paint = YTVerticalGradient(box.size.height, top, bottom, hair, under);
 
-    if (paint != nil) {
-        [view setBackgroundColor:[UIColor colorWithPatternImage:paint]];
+    [paint drawInRect:box];
+}
+
++ (void)paintBar:(UIView *)view {
+    if (view == nil) {
+        return;
     }
+
+    YTSkinBarBacking *backing = nil;
+
+    for (UIView *child in [view subviews]) {
+        if ([child isKindOfClass:[YTSkinBarBacking class]]) {
+            backing = (YTSkinBarBacking *)child;
+
+            break;
+        }
+    }
+
+    if (![self isClassic]) {
+        [backing removeFromSuperview];
+        [view setBackgroundColor:[YTTheme background]];
+
+        return;
+    }
+
+    /**
+     * Подложка, а не цвет фона.
+     *
+     * Цветом-узором полосу тоже можно покрасить, но узор готовится под
+     * известную высоту, а в миг покраски её обычно ещё нет: цвета
+     * назначают до раскладки. Подложка же перерисовывает себя сама,
+     * когда ей меняют размер, — и высота всегда та, что на экране.
+     */
+    if (backing == nil) {
+        backing = [[YTSkinBarBacking alloc] initWithFrame:[view bounds]];
+
+        [backing setUserInteractionEnabled:NO];
+        [backing setContentMode:UIViewContentModeRedraw];
+        [backing setAutoresizingMask:UIViewAutoresizingFlexibleWidth |
+                                     UIViewAutoresizingFlexibleHeight];
+
+        [view insertSubview:backing atIndex:0];
+    }
+
+    [backing setFrame:[view bounds]];
+    [backing setNeedsDisplay];
+
+    [view setBackgroundColor:[YTTheme surface]];
 }
 
 + (void)paintRaised:(UIView *)view radius:(CGFloat)radius {
@@ -296,16 +550,7 @@ static UIImage *YTVerticalGradient(CGFloat height,
 
     // Верхняя полоса: у объёмного оформления с градиентом и волосками.
     if (classic) {
-        UIColor *top = nil;
-        UIColor *bottom = nil;
-        UIColor *hair = nil;
-        UIColor *under = nil;
-
-        [self barTop:&top bottom:&bottom hair:&hair under:&under];
-
-        UIImage *paint = YTVerticalGradient(bar, top, bottom, hair, under);
-
-        [paint drawInRect:CGRectMake(0, 0, size.width, bar)];
+        [self drawBarInRect:CGRectMake(0, 0, size.width, bar)];
     } else {
         CGContextSetFillColorWithColor(context,
             [(dark ? YTColor(0x0F0F0F) : YTColor(0xFFFFFF)) CGColor]);
@@ -352,16 +597,7 @@ static UIImage *YTVerticalGradient(CGFloat height,
     CGFloat tabsTop = size.height - tabs;
 
     if (classic) {
-        UIColor *top = nil;
-        UIColor *bottom = nil;
-        UIColor *hair = nil;
-        UIColor *under = nil;
-
-        [self barTop:&top bottom:&bottom hair:&hair under:&under];
-
-        UIImage *paint = YTVerticalGradient(tabs, top, bottom, hair, nil);
-
-        [paint drawInRect:CGRectMake(0, tabsTop, size.width, tabs)];
+        [self drawBarInRect:CGRectMake(0, tabsTop, size.width, tabs)];
     } else {
         CGContextSetFillColorWithColor(context,
             [(dark ? YTColor(0x0F0F0F) : YTColor(0xFFFFFF)) CGColor]);

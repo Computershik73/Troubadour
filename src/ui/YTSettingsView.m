@@ -1102,7 +1102,7 @@ static const CGFloat YTSheetOption = 42;
 
 - (void)refresh {
     [[self view] setBackgroundColor:[YTTheme background]];
-    [_bar setBackgroundColor:[YTTheme background]];
+    [YTSkin paintBar:_bar];
     [_page setBackgroundColor:[YTTheme background]];
 
     [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];

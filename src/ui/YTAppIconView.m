@@ -3,6 +3,7 @@
 #import "YTAppIcon.h"
 #import "YTMetrics.h"
 #import "YTStrings.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 #import "YTUtil.h"
 
@@ -202,7 +203,7 @@
 - (void)repaintColours {
     [[self view] setBackgroundColor:[YTTheme background]];
 
-    [_bar setBackgroundColor:[YTTheme background]];
+    [YTSkin paintBar:_bar];
 
     [_heading setTextColor:[YTTheme primaryText]];
     [_back setTitleColor:[YTTheme primaryText] forState:UIControlStateNormal];
@@ -481,7 +482,7 @@
     CGFloat top = YTStatusBarHeight();
 
     [_bar setFrame:CGRectMake(0, 0, bounds.size.width, top + 44)];
-    [_bar setBackgroundColor:[YTTheme background]];
+    [YTSkin paintBar:_bar];
 
     [_back setFrame:CGRectMake(4, top, 44, 44)];
     [_heading setFrame:CGRectMake(52, top, bounds.size.width - 68, 44)];

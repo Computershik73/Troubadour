@@ -10,6 +10,7 @@
 #import "YTMetrics.h"
 #import "YTRoundedImageView.h"
 #import "YTSettings.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 #import "YTUtil.h"
 #import "YTVideoItem.h"
@@ -253,7 +254,7 @@ static const NSUInteger YTSearchHistoryLimit = 200;
     [[self view] setBackgroundColor:[YTTheme background]];
 
     _bar = [[UIView alloc] initWithFrame:CGRectZero];
-    [_bar setBackgroundColor:[YTTheme background]];
+    [YTSkin paintBar:_bar];
     [[self view] addSubview:_bar];
 
     _back = [UIButton buttonWithType:UIButtonTypeCustom];
