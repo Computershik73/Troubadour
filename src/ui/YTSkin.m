@@ -102,6 +102,28 @@ static NSMutableDictionary *YTSkinCache(void) {
 @end
 
 
+@implementation YTSkinShelfView
+
+- (id)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+
+    if (self != nil) {
+        [self setBackgroundColor:[UIColor clearColor]];
+        [self setOpaque:NO];
+        [self setUserInteractionEnabled:NO];
+        [self setContentMode:UIViewContentModeRedraw];
+    }
+
+    return self;
+}
+
+- (void)drawRect:(CGRect)rect {
+    [YTSkin drawHeaderInRect:[self bounds]];
+}
+
+@end
+
+
 @implementation YTSkin
 
 + (void)dropCache {
@@ -273,8 +295,17 @@ static NSMutableDictionary *YTSkinCache(void) {
              */
             @"subscriptions_guide", @"tab_home",
             @"subscriptions_guide_selected", @"tab_home_on",
-            @"people_guide", @"tab_subs",
-            @"people_guide_selected", @"tab_subs_on",
+            /**
+             * Подпискам — список с уголком воспроизведения.
+             *
+             * Сперва стояли двое (`people_guide`), и это читалось как
+             * «люди», а не «каналы, на которые я подписан». Домик, который
+             * в наборе зовётся `subscriptions_guide`, занят главной: в том
+             * приложении лента подписок и была главной, у нас это разные
+             * разделы.
+             */
+            @"playlists_guide", @"tab_subs",
+            @"playlists_guide_selected", @"tab_subs_on",
 
             /**
              * Вертикальных роликов в ту пору не было, колокольчика тоже.
@@ -406,17 +437,50 @@ static NSMutableDictionary *YTSkinCache(void) {
 
     CGContextRef context = UIGraphicsGetCurrentContext();
 
-    // Светлая тень снизу.
+    CGRect box = CGRectMake(0, 0, size.width, size.height);
+
+    /**
+     * Тень под рисунком — на точку вниз.
+     *
+     * На тёмной полосе она тёмная, на светлой странице светлая: в обоих
+     * случаях получается вдавленный край, тот самый приём, которым
+     * сделаны значки в наборе.
+     */
     CGContextSaveGState(context);
     CGContextTranslateCTM(context, 0, 1);
-    CGContextSetAlpha(context, night ? 0.45 : 0.75);
-    [YTTintedImage(flat, night ? YTColor(0x8A8A8A) : YTColor(0xFFFFFF))
-        drawInRect:CGRectMake(0, 0, size.width, size.height)];
+    CGContextSetAlpha(context, night ? 0.9 : 0.75);
+    [YTTintedImage(flat, night ? YTColor(0x000000) : YTColor(0xFFFFFF))
+        drawInRect:box];
     CGContextRestoreGState(context);
 
-    // И сам рисунок поверх.
-    [YTTintedImage(flat, night ? YTColor(0xE8E8E8) : YTColor(0x3C3C3C))
-        drawInRect:CGRectMake(0, 0, size.width, size.height)];
+    /**
+     * Сам рисунок — с отливом сверху вниз, а не ровной заливкой.
+     *
+     * Плоский белый значок рядом с выпуклыми выдаёт себя сразу; отлив
+     * даёт ту же металлическую поверхность, что и у соседей. Рисунок
+     * служит трафаретом: заливаем градиентом сквозь него.
+     */
+    CGContextSaveGState(context);
+    CGContextClipToMask(context, box, [flat CGImage]);
+
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+
+    NSArray *shades = night
+        ? [NSArray arrayWithObjects:(id)[YTColor(0xFFFFFF) CGColor],
+                                    (id)[YTColor(0x9A9A9A) CGColor], nil]
+        : [NSArray arrayWithObjects:(id)[YTColor(0x6E6E6E) CGColor],
+                                    (id)[YTColor(0x2C2C2C) CGColor], nil];
+
+    CGGradientRef gradient = CGGradientCreateWithColors(space,
+        (__bridge CFArrayRef)shades, NULL);
+
+    CGContextDrawLinearGradient(context, gradient,
+        CGPointMake(0, 0), CGPointMake(0, size.height), 0);
+
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(space);
+
+    CGContextRestoreGState(context);
 
     UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
 
@@ -784,13 +848,76 @@ static NSMutableDictionary *YTSkinCache(void) {
         return NO;
     }
 
+    BOOL night = [YTTheme isDark];
+
     CGFloat hair = 1.0 / ([[UIScreen mainScreen]
         respondsToSelector:@selector(scale)] ? [[UIScreen mainScreen] scale] : 1.0);
 
+    /**
+     * Карточка — выпуклая, а не просто закрашенная.
+     *
+     * Четыре слоя, из которых и складывается объём той поры: тень под
+     * листом, отлив по самому листу сверху вниз, светлая кромка по
+     * верхнему краю и тёмная кайма кругом. Раньше здесь была ровная
+     * заливка с каймой — этого мало: на снимках карточки читались
+     * как прямоугольники, а не как лежащие листы.
+     *
+     * Тень рисуем сами и только под карточкой: `shadowOffset` у слоя
+     * заставил бы систему считать её на каждом кадре прокрутки, а так
+     * она попадает в ту же отрисовку, что и всё остальное.
+     */
     CGContextSaveGState(context);
+    CGContextSetShadowWithColor(context, CGSizeMake(0, 1), 2.0,
+        [(night ? YTColor(0xB0000000) : YTColor(0x60000000)) CGColor]);
     [self pathInContext:context box:box radius:6];
     CGContextSetFillColorWithColor(context, [[YTTheme surface] CGColor]);
     CGContextFillPath(context);
+    CGContextRestoreGState(context);
+
+    /**
+     * Готовая подложка набора — если она к лицу теме.
+     *
+     * `cell_background_browse` почти белая; в тёмной теме подпись на ней
+     * пропала бы, поэтому там рисуем отлив своими цветами.
+     */
+    UIImage *ready = night ? nil : [self assetNamed:@"cell_background_browse"];
+
+    CGContextSaveGState(context);
+    [self pathInContext:context box:box radius:6];
+    CGContextClip(context);
+
+    if (ready != nil) {
+        CGFloat cap = floor([ready size].width / 2);
+
+        [[ready stretchableImageWithLeftCapWidth:cap
+                                    topCapHeight:floor([ready size].height / 2)]
+            drawInRect:box];
+    } else {
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+
+        NSArray *shades = night
+            ? [NSArray arrayWithObjects:(id)[YTColor(0x3C3C3C) CGColor],
+                                        (id)[YTColor(0x242424) CGColor], nil]
+            : [NSArray arrayWithObjects:(id)[YTColor(0xFFFFFF) CGColor],
+                                        (id)[YTColor(0xE6E9ED) CGColor], nil];
+
+        CGGradientRef gradient = CGGradientCreateWithColors(space,
+            (__bridge CFArrayRef)shades, NULL);
+
+        CGContextDrawLinearGradient(context, gradient,
+            CGPointMake(0, CGRectGetMinY(box)),
+            CGPointMake(0, CGRectGetMaxY(box)), 0);
+
+        CGGradientRelease(gradient);
+        CGColorSpaceRelease(space);
+    }
+
+    // Светлая кромка по верхнему краю — свет падает сверху.
+    CGContextSetFillColorWithColor(context,
+        [(night ? YTColor(0x66FFFFFF) : YTColor(0xCCFFFFFF)) CGColor]);
+    CGContextFillRect(context, CGRectMake(CGRectGetMinX(box), CGRectGetMinY(box),
+                                          box.size.width, hair));
+
     CGContextRestoreGState(context);
 
     CGContextSaveGState(context);
@@ -798,9 +925,69 @@ static NSMutableDictionary *YTSkinCache(void) {
                     box:CGRectInset(box, hair / 2, hair / 2)
                  radius:6];
     CGContextSetLineWidth(context, hair);
-    CGContextSetStrokeColorWithColor(context, [[YTTheme divider] CGColor]);
+    CGContextSetStrokeColorWithColor(context,
+        [(night ? YTColor(0x0D0D0D) : YTColor(0x9AA0A8)) CGColor]);
     CGContextStrokePath(context);
     CGContextRestoreGState(context);
+
+    return YES;
+}
+
+/**
+ * Полка заголовка раздела — тёмная полоса с отливом.
+ *
+ * Такими в ту пору были заголовки групп в списках: тёмная планка во всю
+ * ширину, светлая кромка сверху, тень снизу. Возвращает `NO` при обычном
+ * оформлении — тогда заголовок остаётся простой строкой.
+ */
++ (BOOL)drawHeaderInRect:(CGRect)box {
+    if (![self isClassic] || box.size.width <= 0 || box.size.height <= 0) {
+        return NO;
+    }
+
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    if (context == NULL) {
+        return NO;
+    }
+
+    UIImage *ready = [self assetNamed:@"header_background"];
+
+    if (ready != nil) {
+        [ready drawInRect:box];
+
+        return YES;
+    }
+
+    CGFloat hair = 1.0 / ([[UIScreen mainScreen]
+        respondsToSelector:@selector(scale)] ? [[UIScreen mainScreen] scale] : 1.0);
+
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+
+    NSArray *shades = [NSArray arrayWithObjects:
+        (id)[YTColor(0x4A4A4A) CGColor], (id)[YTColor(0x232323) CGColor], nil];
+
+    CGGradientRef gradient = CGGradientCreateWithColors(space,
+        (__bridge CFArrayRef)shades, NULL);
+
+    CGContextSaveGState(context);
+    CGContextClipToRect(context, box);
+    CGContextDrawLinearGradient(context, gradient,
+        CGPointMake(0, CGRectGetMinY(box)),
+        CGPointMake(0, CGRectGetMaxY(box)), 0);
+    CGContextRestoreGState(context);
+
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(space);
+
+    CGContextSetFillColorWithColor(context, [YTColor(0x6E6E6E) CGColor]);
+    CGContextFillRect(context, CGRectMake(CGRectGetMinX(box), CGRectGetMinY(box),
+                                          box.size.width, hair));
+
+    CGContextSetFillColorWithColor(context, [YTColor(0x0D0D0D) CGColor]);
+    CGContextFillRect(context, CGRectMake(CGRectGetMinX(box),
+                                          CGRectGetMaxY(box) - hair,
+                                          box.size.width, hair));
 
     return YES;
 }

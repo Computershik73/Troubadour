@@ -10,6 +10,7 @@
 #import "YTMetrics.h"
 #import "YTSettings.h"
 #import "YTRoundedImageView.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 #import "YTUtil.h"
 #import "YTVideoItem.h"
@@ -275,6 +276,18 @@ static const CGFloat YTHistoryThumb = 90;
     YTPager *_historyPager;
 
     UILabel *_playlistsTitle;
+
+    /**
+     * Полки под заголовками разделов.
+     *
+     * Отдельными видами, а не фоном у самих заголовков: у «Плейлистов»
+     * заголовок — обычная подпись, и подвид внутри неё закрыл бы текст,
+     * а у остальных двух он лежит в нажимаемом виде. Один приём на все
+     * три проще, чем два разных.
+     */
+    YTSkinShelfView *_historyShelf;
+    YTSkinShelfView *_playlistsShelf;
+    YTSkinShelfView *_downloadsShelf;
     UIScrollView *_playlistsStrip;
     NSMutableArray *_playlistTiles;
 
@@ -408,6 +421,9 @@ static const CGFloat YTHistoryThumb = 90;
         [YTNav push:[[YTHistoryViewController alloc] init]];
     }];
 
+    _historyShelf = [[YTSkinShelfView alloc] initWithFrame:CGRectZero];
+    [_page addSubview:_historyShelf];
+
     _historyTitle = YTLabel(YTFontSemiBold(18), [YTTheme primaryText], 1);
     [_historyTitle setText:YTLoc(@"История  ›")];
     [_historyHeader addSubview:_historyTitle];
@@ -422,6 +438,9 @@ static const CGFloat YTHistoryThumb = 90;
      * заголовок 18 SemiBold с теми же отступами и карточки 160 без плашки
      * длительности (у подборки её нет, там пометка).
      */
+    _playlistsShelf = [[YTSkinShelfView alloc] initWithFrame:CGRectZero];
+    [_page addSubview:_playlistsShelf];
+
     _playlistsTitle = YTLabel(YTFontSemiBold(18), [YTTheme primaryText], 1);
     [_playlistsTitle setText:YTLoc(@"Плейлисты")];
     [_page addSubview:_playlistsTitle];
@@ -441,6 +460,9 @@ static const CGFloat YTHistoryThumb = 90;
     [_downloadsHeader setOnTap:^{
         [YTNav push:[[YTDownloadsViewController alloc] init]];
     }];
+
+    _downloadsShelf = [[YTSkinShelfView alloc] initWithFrame:CGRectZero];
+    [_page addSubview:_downloadsShelf];
 
     _downloadsTitle = YTLabel(YTFontSemiBold(18), [YTTheme primaryText], 1);
     [_downloadsTitle setText:YTLoc(@"Скачанные  ›")];
@@ -844,9 +866,9 @@ static const CGFloat YTHistoryThumb = 90;
 
     [_name setTextColor:[YTTheme primaryText]];
     [_handle setTextColor:[YTTheme secondaryText]];
-    [_historyTitle setTextColor:[YTTheme primaryText]];
-    [_playlistsTitle setTextColor:[YTTheme primaryText]];
-    [_downloadsTitle setTextColor:[YTTheme primaryText]];
+    [_historyTitle setTextColor:[YTTheme barText]];
+    [_playlistsTitle setTextColor:[YTTheme barText]];
+    [_downloadsTitle setTextColor:[YTTheme barText]];
 
     for (YTDownloadTile *tile in _downloadTiles) {
         [tile applyTheme];
@@ -923,6 +945,12 @@ static const CGFloat YTHistoryThumb = 90;
     // «История»: `Margin="16,0,16,8"`.
     CGFloat headerHeight = ceil([[_historyTitle font] lineHeight]);
 
+    /**
+     * Полка шире заголовка: она идёт во всю ширину страницы, от края
+     * до края, — так планки разделов и выглядели.
+     */
+    [_historyShelf setFrame:CGRectMake(0, y - 4, box.size.width, headerHeight + 8)];
+
     [_historyHeader setFrame:CGRectMake(16, y, box.size.width - 32, headerHeight)];
     [_historyTitle setFrame:CGRectMake(0, 0, box.size.width - 32, headerHeight)];
 
@@ -936,6 +964,7 @@ static const CGFloat YTHistoryThumb = 90;
     y += stripHeight + 20;
 
     if (![_playlistsTitle isHidden]) {
+        [_playlistsShelf setFrame:CGRectMake(0, y - 4, box.size.width, headerHeight + 8)];
         [_playlistsTitle setFrame:CGRectMake(16, y, box.size.width - 32, headerHeight)];
 
         y += headerHeight + 8;
@@ -944,6 +973,7 @@ static const CGFloat YTHistoryThumb = 90;
 
         y += stripHeight + 20;
     } else {
+        [_playlistsShelf setFrame:CGRectZero];
         [_playlistsTitle setFrame:CGRectZero];
         [_playlistsStrip setFrame:CGRectZero];
     }
@@ -956,6 +986,7 @@ static const CGFloat YTHistoryThumb = 90;
      * а не голая надпись, как у плейлистов.
      */
     if (![_downloadsHeader isHidden]) {
+        [_downloadsShelf setFrame:CGRectMake(0, y - 4, box.size.width, headerHeight + 8)];
         [_downloadsHeader setFrame:CGRectMake(16, y, box.size.width - 32, headerHeight)];
         [_downloadsTitle setFrame:CGRectMake(0, 0, box.size.width - 32, headerHeight)];
 
@@ -967,6 +998,7 @@ static const CGFloat YTHistoryThumb = 90;
 
         y += downHeight + 20;
     } else {
+        [_downloadsShelf setFrame:CGRectZero];
         [_downloadsHeader setFrame:CGRectZero];
         [_downloadsStrip setFrame:CGRectZero];
     }

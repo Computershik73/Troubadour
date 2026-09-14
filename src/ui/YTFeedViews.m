@@ -84,6 +84,18 @@ static const CGFloat YTCardTextGap = 4;
         return nil;
     }
 
+    /**
+     * Карточка рисует свою подложку сама — значит, сама и прозрачна.
+     *
+     * `UIViewContentModeRedraw` здесь по той же причине, что и у
+     * таблетки: без него UIKit при смене размера растянул бы готовую
+     * картинку, а у выпуклого листа кромка в одну точку — растянутая,
+     * она расплылась бы.
+     */
+    [self setBackgroundColor:[UIColor clearColor]];
+    [self setOpaque:NO];
+    [self setContentMode:UIViewContentModeRedraw];
+
     _touch = [[YTTappableView alloc] initWithFrame:CGRectZero];
 
     // Подсветку не рисуем: в оригинале карточка это Button со сплошь
@@ -191,6 +203,17 @@ static const CGFloat YTCardTextGap = 4;
     [_thumb setCornerRadius:thumbRadius];
 }
 
+/**
+ * Подложка карточки.
+ *
+ * Пусто при обычном оформлении — карточка там и была без фона, лежала
+ * прямо на странице. При объёмном рисуется выпуклый лист; отступ в точку
+ * оставлен тени, иначе она обрезалась бы по краю вида.
+ */
+- (void)drawRect:(CGRect)rect {
+    [YTSkin drawCardInRect:CGRectInset([self bounds], 1, 1)];
+}
+
 - (void)bind:(YTVideoItem *)item {
     _item = item;
 
@@ -228,22 +251,14 @@ static const CGFloat YTCardTextGap = 4;
         ? 0 : MAX(0.0, item.watchedShare);
 
     /**
-     * В объёмном оформлении карточка — белый лист с каймой.
+     * Объём карточке даёт собственная отрисовка, а не цвет слоя.
      *
-     * На сером фоне страницы она так и читается: лист, лежащий сверху.
-     * Тень не рисуем: на iPhone 4 в прокручиваемом списке каждая тень —
-     * отдельный проход отрисовки, а кайма даёт почти то же за даром.
+     * Цветом и каймой лист не сделаешь: нужны тень, отлив и светлая
+     * кромка — всё это рисуется разом в `drawRect:` ниже. Здесь только
+     * просим перерисоваться: оформление могло смениться, пока ячейка
+     * лежала в пуле.
      */
-    if ([YTSkin isClassic]) {
-        [self setBackgroundColor:[YTTheme surface]];
-        [[self layer] setCornerRadius:6];
-        [[self layer] setBorderWidth:1];
-        [[self layer] setBorderColor:[[YTTheme divider] CGColor]];
-    } else {
-        [self setBackgroundColor:[UIColor clearColor]];
-        [[self layer] setCornerRadius:0];
-        [[self layer] setBorderWidth:0];
-    }
+    [self setNeedsDisplay];
 
     [_watchedTrack setBackgroundColor:[UIColor colorWithWhite:1 alpha:0.28]];
     [_watchedFill setBackgroundColor:YTColor(0xFF0000)];

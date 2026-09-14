@@ -83,8 +83,12 @@ extern NSString *const YTSkinClassic;
  */
 + (BOOL)drawRaisedInRect:(CGRect)box radius:(CGFloat)radius dark:(BOOL)dark;
 
-/** Подложка карточки: белый лист с каймой. Нет — значит оформление обычное. */
+/** Подложка карточки: выпуклый лист. Нет — значит оформление обычное. */
 + (BOOL)drawCardInRect:(CGRect)box;
+
+/** Полка заголовка раздела: тёмная планка с отливом. */
++ (BOOL)drawHeaderInRect:(CGRect)box;
+
 
 /**
  * Демо-снимок оформления: мини-экран приложения.
@@ -95,4 +99,14 @@ extern NSString *const YTSkinClassic;
  */
 + (UIImage *)previewFor:(NSString *)skin size:(CGSize)size;
 
+@end
+
+/**
+ * Готовая полка под заголовок раздела.
+ *
+ * Вид, который умеет только одно — нарисовать под собой планку эпохи.
+ * Кладётся под заголовок и тянется вместе с ним; при обычном оформлении
+ * ничего не рисует и остаётся невидимым.
+ */
+@interface YTSkinShelfView : UIView
 @end
