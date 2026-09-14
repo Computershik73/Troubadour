@@ -215,7 +215,10 @@ static const CGFloat YTHiDayHeight = 18 + 10;
 - (void)layoutSubviews {
     CGFloat width = [self bounds].size.width;
 
-    [_thumb setFrame:CGRectMake(0, 0, YTHiThumbWidth, YTHiThumbHeight)];
+    // Поле под рамку — только при объёмном оформлении.
+    CGFloat pad = [YTSkin isClassic] ? 5 : 0;
+
+    [_thumb setFrame:CGRectMake(pad, pad, YTHiThumbWidth, YTHiThumbHeight - pad * 2)];
 
     // Плашка в правом нижнем углу превью: `Margin="0,0,5,5"`, `Padding="4,1"`.
     CGSize text = [[_badge text] sizeWithFont:[_badge font]];
@@ -223,8 +226,8 @@ static const CGFloat YTHiDayHeight = 18 + 10;
     CGFloat badgeWidth = ceil(text.width) + 8;
     CGFloat badgeHeight = ceil(text.height) + 2;
 
-    CGRect badge = CGRectMake(YTHiThumbWidth - badgeWidth - 5,
-                              YTHiThumbHeight - badgeHeight - 5,
+    CGRect badge = CGRectMake(pad + YTHiThumbWidth - badgeWidth - 5,
+                              YTHiThumbHeight - pad - badgeHeight - 5,
                               badgeWidth, badgeHeight);
 
     [_badgePill setFrame:badge];
@@ -233,20 +236,20 @@ static const CGFloat YTHiDayHeight = 18 + 10;
     // Полоска — по нижнему краю превью, в четыре точки, как в ленте.
     if (![_watchedTrack isHidden]) {
         CGFloat bar = 4;
-        CGFloat top = YTHiThumbHeight - bar;
+        CGFloat line = YTHiThumbHeight - pad - bar;
 
-        [_watchedTrack setFrame:CGRectMake(0, top, YTHiThumbWidth, bar)];
-        [_watchedFill setFrame:CGRectMake(0, top,
+        [_watchedTrack setFrame:CGRectMake(pad, line, YTHiThumbWidth, bar)];
+        [_watchedFill setFrame:CGRectMake(pad, line,
             (CGFloat)(YTHiThumbWidth * _watchedShare), bar)];
     }
 
-    CGFloat left = YTHiThumbWidth + YTHiGap;
-    CGFloat textWidth = width - left;
+    CGFloat left = pad + YTHiThumbWidth + YTHiGap;
+    CGFloat textWidth = width - left - pad;
 
     CGFloat titleHeight = YTTextHeight([_title text], [_title font], textWidth, 3);
 
-    [_title setFrame:CGRectMake(left, 0, textWidth, titleHeight)];
-    [_subtitle setFrame:CGRectMake(left, titleHeight + 4, textWidth, 15)];
+    [_title setFrame:CGRectMake(left, pad, textWidth, titleHeight)];
+    [_subtitle setFrame:CGRectMake(left, pad + titleHeight + 4, textWidth, 15)];
 }
 
 @end

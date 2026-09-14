@@ -58,6 +58,21 @@ static const CGFloat YTCardTextGap = 4;
     return floor(width * 16.0 / 9.0);
 }
 
+/**
+ * Поля внутри карточки — только у объёмного оформления.
+ *
+ * Без них рамка идёт впритык к превью и к подписям, и лист не читается
+ * листом: видно цветной прямоугольник с полоской снизу. Поле нужно и
+ * снаружи — под тень, иначе она обрезается по краю вида.
+ */
++ (CGFloat)cardPadding {
+    return [YTSkin isClassic] ? 6 : 0;
+}
+
++ (CGFloat)cardShadowRoom {
+    return [YTSkin isClassic] ? 3 : 0;
+}
+
 + (CGFloat)heightForWidth:(CGFloat)width item:(YTVideoItem *)item {
     CGFloat titleHeight = ceil([YTFontMedium(14) lineHeight]);
     CGFloat metaHeight = ceil([YTFontRegular(12) lineHeight]);
@@ -73,8 +88,12 @@ static const CGFloat YTCardTextGap = 4;
     // Кружок 36 бывает выше двух строк текста — берём большее.
     CGFloat metaBlock = MAX(text, YTCardAvatar);
 
-    return [self thumbHeightForWidth:width portrait:item.isShort]
-         + YTCardMetaTop + metaBlock;
+    CGFloat pad = [self cardPadding];
+    CGFloat room = [self cardShadowRoom];
+
+    return [self thumbHeightForWidth:(width - pad * 2 - room * 2)
+                            portrait:item.isShort]
+         + YTCardMetaTop + metaBlock + pad * 2 + room * 2;
 }
 
 - (id)initWithFrame:(CGRect)frame {
@@ -211,7 +230,9 @@ static const CGFloat YTCardTextGap = 4;
  * оставлен тени, иначе она обрезалась бы по краю вида.
  */
 - (void)drawRect:(CGRect)rect {
-    [YTSkin drawCardInRect:CGRectInset([self bounds], 1, 1)];
+    CGFloat room = [[self class] cardShadowRoom];
+
+    [YTSkin drawCardInRect:CGRectInset([self bounds], room, room)];
 }
 
 - (void)bind:(YTVideoItem *)item {
@@ -298,11 +319,22 @@ static const CGFloat YTCardTextGap = 4;
 
     [_touch setFrame:box];
 
-    CGFloat width = box.size.width;
+    /**
+     * Содержимое сдвинуто внутрь на поле рамки и на запас под тень.
+     *
+     * Считается от одних и тех же чисел, что и высота выше, — разойдись
+     * они, и подписи вылезли бы за лист.
+     */
+    CGFloat pad = [[self class] cardPadding];
+    CGFloat room = [[self class] cardShadowRoom];
+    CGFloat left = pad + room;
+    CGFloat top = pad + room;
+
+    CGFloat width = box.size.width - left * 2;
     CGFloat thumbHeight = [[self class] thumbHeightForWidth:width
                                                    portrait:_item.isShort];
 
-    [_thumb setFrame:CGRectMake(0, 0, width, thumbHeight)];
+    [_thumb setFrame:CGRectMake(left, top, width, thumbHeight)];
 
     /**
      * Полоска просмотра — по нижнему краю кадра, в четыре точки: так же,
@@ -311,10 +343,10 @@ static const CGFloat YTCardTextGap = 4;
      */
     if (![_watchedTrack isHidden]) {
         CGFloat bar = 4;
-        CGFloat top = thumbHeight - bar;
+        CGFloat line = top + thumbHeight - bar;
 
-        [_watchedTrack setFrame:CGRectMake(0, top, width, bar)];
-        [_watchedFill setFrame:CGRectMake(0, top,
+        [_watchedTrack setFrame:CGRectMake(left, line, width, bar)];
+        [_watchedFill setFrame:CGRectMake(left, line,
                                           (CGFloat)(width * _watchedShare), bar)];
     }
 
@@ -337,22 +369,22 @@ static const CGFloat YTCardTextGap = 4;
     CGFloat badgeWidth = ceil(text.width) + 12;
     CGFloat badgeHeight = ceil(text.height) + 4;
 
-    CGRect badge = CGRectMake(width - badgeWidth - 8,
-                              thumbHeight - badgeHeight - 8,
+    CGRect badge = CGRectMake(left + width - badgeWidth - 8,
+                              top + thumbHeight - badgeHeight - 8,
                               badgeWidth, badgeHeight);
 
     [_durationPill setFrame:badge];
     [_duration setFrame:badge];
 
-    CGFloat y = thumbHeight + YTCardMetaTop;
-    CGFloat textLeft = 0;
+    CGFloat y = top + thumbHeight + YTCardMetaTop;
+    CGFloat textLeft = left;
 
     if (![_avatar isHidden]) {
-        [_avatar setFrame:CGRectMake(0, y, YTCardAvatar, YTCardAvatar)];
-        textLeft = YTCardAvatar + YTCardMetaGap;
+        [_avatar setFrame:CGRectMake(left, y, YTCardAvatar, YTCardAvatar)];
+        textLeft = left + YTCardAvatar + YTCardMetaGap;
     }
 
-    CGFloat textWidth = width - textLeft;
+    CGFloat textWidth = box.size.width - textLeft - left;
 
     CGFloat titleHeight = ceil([[_title font] lineHeight]);
     CGFloat metaHeight = ceil([[_meta font] lineHeight]);

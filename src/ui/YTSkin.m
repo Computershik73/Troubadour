@@ -877,9 +877,16 @@ static NSMutableDictionary *YTSkinCache(void) {
      * заставил бы систему считать её на каждом кадре прокрутки, а так
      * она попадает в ту же отрисовку, что и всё остальное.
      */
+    /**
+     * Тень — первым делом и заметная.
+     *
+     * Прежде она была в точку со смазом в две: на снимке её попросту
+     * не видно, и лист читался плоским прямоугольником. Смещение вниз
+     * и размытие вчетверо — то, при котором лист отрывается от фона.
+     */
     CGContextSaveGState(context);
-    CGContextSetShadowWithColor(context, CGSizeMake(0, 1), 2.0,
-        [(night ? YTColor(0xB0000000) : YTColor(0x60000000)) CGColor]);
+    CGContextSetShadowWithColor(context, CGSizeMake(0, 2), 4.0,
+        [(night ? YTColor(0xCC000000) : YTColor(0x66000000)) CGColor]);
     [self pathInContext:context box:box radius:6];
     CGContextSetFillColorWithColor(context, [[YTTheme surface] CGColor]);
     CGContextFillPath(context);
@@ -910,7 +917,7 @@ static NSMutableDictionary *YTSkinCache(void) {
         CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
 
         NSArray *shades = [NSArray arrayWithObjects:
-            (id)[YTColor(0xFFFFFF) CGColor], (id)[YTColor(0xDFE3E8) CGColor], nil];
+            (id)[YTColor(0xFFFFFF) CGColor], (id)[YTColor(0xD3D9E0) CGColor], nil];
 
         CGGradientRef gradient = CGGradientCreateWithColors(space,
             (__bridge CFArrayRef)shades, NULL);
@@ -923,9 +930,21 @@ static NSMutableDictionary *YTSkinCache(void) {
         CGColorSpaceRelease(space);
     }
 
-    // Светлая кромка по верхнему краю — свет падает сверху.
-    CGContextSetFillColorWithColor(context, [YTColor(0xCCFFFFFF) CGColor]);
+    /**
+     * Фаска: светлая полоса по верхнему краю и тёмная по нижнему.
+     *
+     * Одной верхней мало — она читается как блик на плоскости. Пара
+     * «свет сверху, тень снизу» и даёт ту самую выпуклость, на которой
+     * держалось всё оформление той поры. Полосы в точку толщиной, как
+     * и было: толще — уже не фаска, а кайма.
+     */
+    CGContextSetFillColorWithColor(context, [YTColor(0xF2FFFFFF) CGColor]);
     CGContextFillRect(context, CGRectMake(CGRectGetMinX(box), CGRectGetMinY(box),
+                                          box.size.width, hair));
+
+    CGContextSetFillColorWithColor(context, [YTColor(0x99A8AEB6) CGColor]);
+    CGContextFillRect(context, CGRectMake(CGRectGetMinX(box),
+                                          CGRectGetMaxY(box) - hair * 2,
                                           box.size.width, hair));
 
     CGContextRestoreGState(context);

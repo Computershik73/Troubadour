@@ -219,7 +219,15 @@ static const CGFloat YTHistoryThumb = 90;
 }
 
 - (void)layoutSubviews {
-    [_thumb setFrame:CGRectMake(0, 0, YTHistoryCard, YTHistoryThumb)];
+    /**
+     * Поле под рамку — только при объёмном оформлении.
+     *
+     * Иначе рамка идёт впритык к превью, и лист не читается листом.
+     */
+    CGFloat pad = [YTSkin isClassic] ? 4 : 0;
+    CGFloat inner = YTHistoryCard - pad * 2;
+
+    [_thumb setFrame:CGRectMake(pad, pad, inner, YTHistoryThumb - pad)];
 
     // Плашка: `Margin="0,0,4,4"`, `Padding="4,1"`.
     CGSize text = [[_badge text] sizeWithFont:[_badge font]];
@@ -227,7 +235,7 @@ static const CGFloat YTHistoryThumb = 90;
     CGFloat width = ceil(text.width) + 8;
     CGFloat height = ceil(text.height) + 2;
 
-    CGRect badge = CGRectMake(YTHistoryCard - width - 4,
+    CGRect badge = CGRectMake(YTHistoryCard - pad - width - 4,
                               YTHistoryThumb - height - 4, width, height);
 
     [_badgePill setFrame:badge];
@@ -244,8 +252,8 @@ static const CGFloat YTHistoryThumb = 90;
     }
 
     // `Margin="0,6,0,0"` у названия и `0,3,0,0` у подписи под ним.
-    [_title setFrame:CGRectMake(0, YTHistoryThumb + 6, YTHistoryCard, 34)];
-    [_subtitle setFrame:CGRectMake(0, YTHistoryThumb + 6 + 34 + 3, YTHistoryCard, 14)];
+    [_title setFrame:CGRectMake(pad, YTHistoryThumb + 6, inner, 34)];
+    [_subtitle setFrame:CGRectMake(pad, YTHistoryThumb + 6 + 34 + 3, inner, 14)];
 }
 
 @end
