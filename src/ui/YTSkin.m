@@ -673,20 +673,21 @@ static NSMutableDictionary *YTSkinCache(void) {
 
     if (ready != nil) {
         [ready drawInRect:box];
+    } else {
+        UIColor *top = nil;
+        UIColor *bottom = nil;
+        UIColor *hair = nil;
+        UIColor *under = nil;
 
-        return;
+        [self barTop:&top bottom:&bottom hair:&hair under:&under];
+
+        UIImage *paint = YTVerticalGradient(box.size.height, top, bottom, hair, under);
+
+        [paint drawInRect:box];
     }
 
-    UIColor *top = nil;
-    UIColor *bottom = nil;
-    UIColor *hair = nil;
-    UIColor *under = nil;
-
-    [self barTop:&top bottom:&bottom hair:&hair under:&under];
-
-    UIImage *paint = YTVerticalGradient(box.size.height, top, bottom, hair, under);
-
-    [paint drawInRect:box];
+    // Глянец и на полосе: у той эпохи она была стеклянной, а не матовой.
+    [self glossInContext:UIGraphicsGetCurrentContext() box:box radius:0 strength:0.12];
 }
 
 + (void)paintBar:(UIView *)view {
@@ -803,6 +804,9 @@ static NSMutableDictionary *YTSkinCache(void) {
 
         CGContextRestoreGState(context);
 
+        [self glossInContext:context box:box radius:radius
+                    strength:(wantDark ? 0.16 : 0.45)];
+
         return YES;
     }
 
@@ -830,6 +834,9 @@ static NSMutableDictionary *YTSkinCache(void) {
     CGColorSpaceRelease(space);
 
     CGContextRestoreGState(context);
+
+    [self glossInContext:context box:box radius:radius
+                strength:(wantDark ? 0.16 : 0.45)];
 
     CGFloat hair = 1.0 / ([[UIScreen mainScreen]
         respondsToSelector:@selector(scale)] ? [[UIScreen mainScreen] scale] : 1.0);
@@ -865,43 +872,34 @@ static NSMutableDictionary *YTSkinCache(void) {
         respondsToSelector:@selector(scale)] ? [[UIScreen mainScreen] scale] : 1.0);
 
     /**
-     * Карточка — выпуклая, а не просто закрашенная.
+     * Карточка — выпуклый лист, и в цвете своей темы.
      *
-     * Четыре слоя, из которых и складывается объём той поры: тень под
-     * листом, отлив по самому листу сверху вниз, светлая кромка по
-     * верхнему краю и тёмная кайма кругом. Раньше здесь была ровная
-     * заливка с каймой — этого мало: на снимках карточки читались
-     * как прямоугольники, а не как лежащие листы.
+     * Была попытка сделать её светлой всегда, как ячейки того приложения;
+     * владелец справедливо заметил, что противоположный цвет — это не
+     * объём. Объём складывается из пяти слоёв, и цвет тут ни при чём:
+     * тень под листом, отлив по нему сверху вниз, глянец на верхней
+     * половине, фаска «свет сверху — тень снизу» и кайма кругом.
+     * В тёмной теме всё то же, только тонами темнее.
      *
      * Тень рисуем сами и только под карточкой: `shadowOffset` у слоя
      * заставил бы систему считать её на каждом кадре прокрутки, а так
      * она попадает в ту же отрисовку, что и всё остальное.
      */
-    /**
-     * Тень — первым делом и заметная.
-     *
-     * Прежде она была в точку со смазом в две: на снимке её попросту
-     * не видно, и лист читался плоским прямоугольником. Смещение вниз
-     * и размытие вчетверо — то, при котором лист отрывается от фона.
-     */
     CGContextSaveGState(context);
     CGContextSetShadowWithColor(context, CGSizeMake(0, 2), 4.0,
-        [(night ? YTColor(0xCC000000) : YTColor(0x66000000)) CGColor]);
+        [(night ? YTColor(0xE0000000) : YTColor(0x66000000)) CGColor]);
     [self pathInContext:context box:box radius:6];
     CGContextSetFillColorWithColor(context, [[YTTheme surface] CGColor]);
     CGContextFillPath(context);
     CGContextRestoreGState(context);
 
     /**
-     * Ячейка светлая в обеих темах — так было в ту пору.
+     * Готовая подложка набора — только в светлой теме.
      *
-     * Тёмный хром и светлое содержимое: полосы чёрные, а списки под ними
-     * белые. Я сперва пробовал держать ячейку в цвете темы, и в тёмной
-     * она выходила тёмным прямоугольником на тёмном фоне — никакого
-     * объёма там взяться и не могло. Подписи на карточке поэтому
-     * спрашивают свой цвет отдельно (`YTTheme cardText`).
+     * `cell_background_browse` почти белая; в тёмной теме её место
+     * занимает отлив своими тонами.
      */
-    UIImage *ready = [self assetNamed:@"cell_background_browse"];
+    UIImage *ready = night ? nil : [self assetNamed:@"cell_background_browse"];
 
     CGContextSaveGState(context);
     [self pathInContext:context box:box radius:6];
@@ -916,8 +914,11 @@ static NSMutableDictionary *YTSkinCache(void) {
     } else {
         CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
 
-        NSArray *shades = [NSArray arrayWithObjects:
-            (id)[YTColor(0xFFFFFF) CGColor], (id)[YTColor(0xD3D9E0) CGColor], nil];
+        NSArray *shades = night
+            ? [NSArray arrayWithObjects:(id)[YTColor(0x505050) CGColor],
+                                        (id)[YTColor(0x242424) CGColor], nil]
+            : [NSArray arrayWithObjects:(id)[YTColor(0xFFFFFF) CGColor],
+                                        (id)[YTColor(0xD3D9E0) CGColor], nil];
 
         CGGradientRef gradient = CGGradientCreateWithColors(space,
             (__bridge CFArrayRef)shades, NULL);
@@ -930,19 +931,29 @@ static NSMutableDictionary *YTSkinCache(void) {
         CGColorSpaceRelease(space);
     }
 
+    CGContextRestoreGState(context);
+
+    // Глянец — верхняя половина светлее, с резкой границей посередине.
+    [self glossInContext:context box:box radius:6 strength:(night ? 0.14 : 0.40)];
+
     /**
      * Фаска: светлая полоса по верхнему краю и тёмная по нижнему.
      *
      * Одной верхней мало — она читается как блик на плоскости. Пара
-     * «свет сверху, тень снизу» и даёт ту самую выпуклость, на которой
-     * держалось всё оформление той поры. Полосы в точку толщиной, как
-     * и было: толще — уже не фаска, а кайма.
+     * «свет сверху, тень снизу» и даёт выпуклость. Полосы в точку
+     * толщиной: толще — уже не фаска, а кайма.
      */
-    CGContextSetFillColorWithColor(context, [YTColor(0xF2FFFFFF) CGColor]);
+    CGContextSaveGState(context);
+    [self pathInContext:context box:box radius:6];
+    CGContextClip(context);
+
+    CGContextSetFillColorWithColor(context,
+        [(night ? YTColor(0x80FFFFFF) : YTColor(0xF2FFFFFF)) CGColor]);
     CGContextFillRect(context, CGRectMake(CGRectGetMinX(box), CGRectGetMinY(box),
                                           box.size.width, hair));
 
-    CGContextSetFillColorWithColor(context, [YTColor(0x99A8AEB6) CGColor]);
+    CGContextSetFillColorWithColor(context,
+        [(night ? YTColor(0xB3000000) : YTColor(0x99A8AEB6)) CGColor]);
     CGContextFillRect(context, CGRectMake(CGRectGetMinX(box),
                                           CGRectGetMaxY(box) - hair * 2,
                                           box.size.width, hair));
@@ -954,11 +965,53 @@ static NSMutableDictionary *YTSkinCache(void) {
                     box:CGRectInset(box, hair / 2, hair / 2)
                  radius:6];
     CGContextSetLineWidth(context, hair);
-    CGContextSetStrokeColorWithColor(context, [YTColor(0x8F959D) CGColor]);
+    CGContextSetStrokeColorWithColor(context,
+        [(night ? YTColor(0x0A0A0A) : YTColor(0x8F959D)) CGColor]);
     CGContextStrokePath(context);
     CGContextRestoreGState(context);
 
     return YES;
+}
+
+/**
+ * Глянец: верхняя половина светлее, с резкой границей посередине.
+ *
+ * Тот самый «аква»-блик: белый с убывающей плотностью на верхней
+ * половине и обрыв на середине высоты. Именно резкая граница и делает
+ * поверхность стеклянной — мягкий переход читался бы просто как
+ * светлый верх.
+ */
++ (void)glossInContext:(CGContextRef)context
+                   box:(CGRect)box
+                radius:(CGFloat)radius
+              strength:(CGFloat)strength {
+    if (context == NULL || strength <= 0 || box.size.height < 6) {
+        return;
+    }
+
+    CGContextSaveGState(context);
+    [self pathInContext:context box:box radius:radius];
+    CGContextClip(context);
+
+    CGRect upper = CGRectMake(CGRectGetMinX(box), CGRectGetMinY(box),
+                              box.size.width, floor(box.size.height / 2));
+
+    CGContextClipToRect(context, upper);
+
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+
+    CGFloat parts[8] = { 1, 1, 1, strength,  1, 1, 1, strength * 0.2 };
+    CGFloat spots[2] = { 0, 1 };
+
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(space, parts, spots, 2);
+
+    CGContextDrawLinearGradient(context, gradient,
+        CGPointMake(0, CGRectGetMinY(upper)),
+        CGPointMake(0, CGRectGetMaxY(upper)), 0);
+
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(space);
+    CGContextRestoreGState(context);
 }
 
 /**

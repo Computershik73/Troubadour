@@ -500,7 +500,15 @@ UILabel *YTLabel(UIFont *font, UIColor *color, NSInteger lines) {
     BOOL pressed = [fill isEqual:[YTTheme primaryActionBackground]]
                 || [fill isEqual:[YTTheme primaryText]];
 
-    if ([YTSkin drawRaisedInRect:box radius:radius dark:pressed]) {
+    /**
+     * Полупрозрачные плашки — длительность на превью — кнопками не делаем.
+     *
+     * Они лежат поверх картинки и должны просто затемнять её под белой
+     * цифрой; светлая кнопка под белой цифрой оставила бы плашку пустой.
+     */
+    BOOL translucent = CGColorGetAlpha([fill CGColor]) < 0.99;
+
+    if (!translucent && [YTSkin drawRaisedInRect:box radius:radius dark:pressed]) {
         return;
     }
 

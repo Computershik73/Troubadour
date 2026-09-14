@@ -225,11 +225,13 @@ UIColor *YTColor(uint32_t argb) {
 }
 
 + (UIColor *)cardText {
-    return [YTSkin isClassic] ? YTColor(0x1A1A1A) : [self primaryText];
+    // Светлый лист только в светлой теме; в тёмной карточка тёмная,
+    // и подпись на ней — обычная светлая.
+    return ([YTSkin isClassic] && ![self isDark]) ? YTColor(0x1A1A1A) : [self primaryText];
 }
 
 + (UIColor *)cardSecondaryText {
-    return [YTSkin isClassic] ? YTColor(0x5A6068) : [self secondaryText];
+    return ([YTSkin isClassic] && ![self isDark]) ? YTColor(0x5A6068) : [self secondaryText];
 }
 
 + (UIStatusBarStyle)statusBarStyle {

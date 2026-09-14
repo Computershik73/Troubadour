@@ -89,6 +89,12 @@ extern NSString *const YTSkinClassic;
 /** Полка заголовка раздела: тёмная планка с отливом. */
 + (BOOL)drawHeaderInRect:(CGRect)box;
 
+/** Глянец на верхней половине фигуры — «аква»-блик с резкой границей. */
++ (void)glossInContext:(CGContextRef)context
+                   box:(CGRect)box
+                radius:(CGFloat)radius
+              strength:(CGFloat)strength;
+
 
 /**
  * Демо-снимок оформления: мини-экран приложения.

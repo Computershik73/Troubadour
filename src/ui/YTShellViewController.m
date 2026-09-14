@@ -107,7 +107,9 @@
  * смену темы, и взятый однажды набор так и остался бы прежним.
  */
 - (void)applyTheme {
-    [_label setTextColor:[YTTheme primaryText]];
+    // Полоса вкладок при объёмном оформлении тёмная в обеих темах —
+    // подпись берёт цвет полосы, а не страницы.
+    [_label setTextColor:[YTTheme barText]];
 
     NSString *name = _selected
         ? [_iconName stringByAppendingString:@"_on"]
