@@ -973,6 +973,51 @@ static NSMutableDictionary *YTSkinCache(void) {
     return YES;
 }
 
++ (BOOL)dressTrack:(UIImageView *)track
+              fill:(UIImageView *)fill
+              knob:(UIImageView *)knob {
+    if (![self isClassic]) {
+        [track setImage:nil];
+        [fill setImage:nil];
+        [knob setImage:nil];
+
+        return NO;
+    }
+
+    UIImage *bed = [self assetNamed:@"track"];
+    UIImage *done = [self assetNamed:@"played"];
+    UIImage *dot = [self assetNamed:@"scrubber"];
+
+    if (bed == nil || done == nil || dot == nil) {
+        return NO;
+    }
+
+    /**
+     * Тянется середина, торцы остаются своими.
+     *
+     * У дорожки той поры оба конца скруглены и с фаской; растяни её
+     * целиком — фаска размажется по всей длине.
+     */
+    [track setImage:[bed stretchableImageWithLeftCapWidth:
+        floor([bed size].width / 2) topCapHeight:0]];
+
+    [fill setImage:[done stretchableImageWithLeftCapWidth:
+        floor([done size].width / 2) topCapHeight:0]];
+
+    [knob setImage:dot];
+
+    // Круглые углы и заливка теперь не нужны — рисунок их принёс с собой.
+    [track setBackgroundColor:[UIColor clearColor]];
+    [fill setBackgroundColor:[UIColor clearColor]];
+    [knob setBackgroundColor:[UIColor clearColor]];
+
+    [[track layer] setCornerRadius:0];
+    [[fill layer] setCornerRadius:0];
+    [[knob layer] setCornerRadius:0];
+
+    return YES;
+}
+
 /**
  * Глянец: верхняя половина светлее, с резкой границей посередине.
  *

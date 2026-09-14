@@ -27,6 +27,7 @@
 #import "YTStatsPanel.h"
 #import "YTSubtitles.h"
 #import "YTWebAuth.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 #import "YTSettingsSheet.h"
 #import "YTSimpleScreens.h"
@@ -158,9 +159,16 @@ static const CGFloat YTPageMargin = 16;
     UILabel *_time;
     YTRoomyButton *_fullscreen;
 
-    UIView *_track;
-    UIView *_trackFill;
-    UIView *_thumb;
+    /**
+     * Виды полосы — картинками, а не просто цветными прямоугольниками.
+     *
+     * `UIImageView` умеет то, что нужно оформлению эпохи: тянуть картинку
+     * серединой, оставляя торцы. Без рисунка он ведёт себя как обычный
+     * вид, поэтому плоскому оформлению перемена ничего не стоит.
+     */
+    UIImageView *_track;
+    UIImageView *_trackFill;
+    UIImageView *_thumb;
 
     YTLoadingRing *_busy;
 
@@ -1088,20 +1096,30 @@ static const CGFloat YTPageMargin = 16;
      * пришлось бы перекрашивать картинками, а рисунок у него всё равно
      * другой.
      */
-    _track = [[UIView alloc] initWithFrame:CGRectZero];
+    _track = [[UIImageView alloc] initWithFrame:CGRectZero];
     [_track setBackgroundColor:YTColor(0x666666)];
     [[_track layer] setCornerRadius:YTTrackHeight / 2];
     [_overlay addSubview:_track];
 
-    _trackFill = [[UIView alloc] initWithFrame:CGRectZero];
+    _trackFill = [[UIImageView alloc] initWithFrame:CGRectZero];
     [_trackFill setBackgroundColor:YTColor(0xFF0033)];
     [[_trackFill layer] setCornerRadius:YTTrackHeight / 2];
     [_overlay addSubview:_trackFill];
 
-    _thumb = [[UIView alloc] initWithFrame:CGRectMake(0, 0, YTThumbSide, YTThumbSide)];
+    _thumb = [[UIImageView alloc] initWithFrame:
+        CGRectMake(0, 0, YTThumbSide, YTThumbSide)];
     [_thumb setBackgroundColor:YTColor(0xFF0033)];
     [[_thumb layer] setCornerRadius:YTThumbSide / 2];
     [_overlay addSubview:_thumb];
+
+    /**
+     * Полосу одеваем сразу и ещё раз при смене оформления.
+     *
+     * Здесь — чтобы она была одета к первому же показу; в `applyTheme`
+     * ниже — чтобы переодевалась, когда оформление сменили при открытом
+     * плеере.
+     */
+    [YTSkin dressTrack:_track fill:_trackFill knob:_thumb];
 
     /**
      * Нажатия по кадру разбираются распознавателями, а не отдельными

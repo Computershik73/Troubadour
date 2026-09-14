@@ -227,7 +227,9 @@ static const CGFloat YTHistoryThumb = 90;
     CGFloat pad = [YTSkin isClassic] ? 4 : 0;
     CGFloat inner = YTHistoryCard - pad * 2;
 
-    [_thumb setFrame:CGRectMake(pad, pad, inner, YTHistoryThumb - pad)];
+    CGFloat thumbHeight = YTHistoryThumb - pad * 2;
+
+    [_thumb setFrame:CGRectMake(pad, pad, inner, thumbHeight)];
 
     // Плашка: `Margin="0,0,4,4"`, `Padding="4,1"`.
     CGSize text = [[_badge text] sizeWithFont:[_badge font]];
@@ -236,24 +238,32 @@ static const CGFloat YTHistoryThumb = 90;
     CGFloat height = ceil(text.height) + 2;
 
     CGRect badge = CGRectMake(YTHistoryCard - pad - width - 4,
-                              YTHistoryThumb - height - 4, width, height);
+                              pad + thumbHeight - height - 4, width, height);
 
     [_badgePill setFrame:badge];
     [_badge setFrame:badge];
 
-    // Полоска — по нижнему краю превью, в четыре точки, как в ленте.
+    /**
+     * Полоска — по нижнему краю **превью**, а не плитки.
+     *
+     * Про поле рамки она не знала и оставалась на прежнем месте: превью
+     * ушло внутрь, а красная черта так и лежала поперёк плитки во всю
+     * ширину, ниже кадра. Считаем её от тех же `pad` и `thumbHeight`,
+     * что и само превью.
+     */
     if (![_watchedTrack isHidden]) {
         CGFloat bar = 4;
-        CGFloat top = YTHistoryThumb - bar;
+        CGFloat line = pad + thumbHeight - bar;
 
-        [_watchedTrack setFrame:CGRectMake(0, top, YTHistoryCard, bar)];
-        [_watchedFill setFrame:CGRectMake(0, top,
-            (CGFloat)(YTHistoryCard * _watchedShare), bar)];
+        [_watchedTrack setFrame:CGRectMake(pad, line, inner, bar)];
+        [_watchedFill setFrame:CGRectMake(pad, line,
+            (CGFloat)(inner * _watchedShare), bar)];
     }
 
     // `Margin="0,6,0,0"` у названия и `0,3,0,0` у подписи под ним.
     [_title setFrame:CGRectMake(pad, YTHistoryThumb + 6, inner, 34)];
     [_subtitle setFrame:CGRectMake(pad, YTHistoryThumb + 6 + 34 + 3, inner, 14)];
+
 }
 
 @end

@@ -7,6 +7,7 @@
 
 #import "YTHttp.h"
 #import "YTMetrics.h"
+#import "YTSkin.h"
 #import "YTTheme.h"
 
 // Карточка нужна целиком: у неё спрашивают и ролик, и пропуск на ленту.
@@ -601,6 +602,17 @@ static UINavigationController *YTNavControllerRef = nil;
 @implementation YTLoadingRing {
     CAShapeLayer *_arc;
     BOOL _running;
+
+    /**
+     * Вертушка той поры — штатная, системная.
+     *
+     * Рисовать её самим незачем и неправильно: `UIActivityIndicatorView`
+     * в iOS 5 и 6 выглядит ровно так, как выглядела тогда любая загрузка
+     * в системе, — двенадцать спиц, бегущих по кругу. Наше кольцо
+     * с ползущей дугой появилось много позже и в то время смотрелось бы
+     * чужим.
+     */
+    UIActivityIndicatorView *_spokes;
 }
 
 - (id)initWithFrame:(CGRect)frame {
@@ -633,6 +645,8 @@ static UINavigationController *YTNavControllerRef = nil;
     [_arc setFrame:box];
     [_arc setLineWidth:width];
 
+    [_spokes setCenter:CGPointMake(box.size.width / 2, box.size.height / 2)];
+
     /**
      * Путь — полная окружность; видимую часть вырезают `strokeStart`
      * и `strokeEnd`. Дуга при этом не рисуется заново каждый кадр:
@@ -650,8 +664,49 @@ static UINavigationController *YTNavControllerRef = nil;
     CGPathRelease(path);
 }
 
+/** Заводит или убирает системную вертушку — по нынешнему оформлению. */
+- (void)useSpokes:(BOOL)wanted {
+    if (wanted && _spokes == nil) {
+        CGFloat side = MIN([self bounds].size.width, [self bounds].size.height);
+
+        _spokes = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:
+            (side > 32 ? UIActivityIndicatorViewStyleWhiteLarge
+                       : UIActivityIndicatorViewStyleWhite)];
+
+        [_spokes setHidesWhenStopped:YES];
+        [self addSubview:_spokes];
+        [self setNeedsLayout];
+    }
+
+    if (_spokes != nil) {
+        /**
+         * На светлом фоне белая вертушка не видна вовсе, поэтому в светлой
+         * теме берётся серая. Стиль задаётся один раз при заводе, а тут
+         * поправляется: тему могли сменить, пока вид жил в списке.
+         */
+        [_spokes setColor:[YTTheme isDark] ? [UIColor whiteColor]
+                                           : [UIColor darkGrayColor]];
+    }
+
+    [_arc setHidden:wanted];
+
+    if (!wanted) {
+        [_spokes stopAnimating];
+    }
+}
+
 - (void)start {
     [self setHidden:NO];
+
+    [self useSpokes:[YTSkin isClassic]];
+
+    if ([YTSkin isClassic]) {
+        [_spokes startAnimating];
+
+        _running = YES;
+
+        return;
+    }
 
     // Цвет берётся здесь, а не в конструкторе: кольцо переживает смену темы
     // так же, как ячейки списка.
@@ -782,6 +837,8 @@ static UINavigationController *YTNavControllerRef = nil;
 }
 
 - (void)stop {
+    [_spokes stopAnimating];
+
     _running = NO;
 
     [_arc removeAllAnimations];
@@ -1058,6 +1115,20 @@ static UINavigationController *YTNavControllerRef = nil;
     // Экран запаса: страница успевает доехать до того, как список кончится
     // под пальцем.
     if (bottom <= 0 || [scrollView contentOffset].y < bottom - height) {
+        return NO;
+    }
+
+    _busy = YES;
+
+    return YES;
+}
+
+- (BOOL)claimIfShort:(UIScrollView *)scrollView {
+    if (_busy || ![self hasMore]) {
+        return NO;
+    }
+
+    if ([scrollView contentSize].height > [scrollView bounds].size.height) {
         return NO;
     }
 

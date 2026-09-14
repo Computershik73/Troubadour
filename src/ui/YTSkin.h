@@ -89,6 +89,21 @@ extern NSString *const YTSkinClassic;
 /** Полка заголовка раздела: тёмная планка с отливом. */
 + (BOOL)drawHeaderInRect:(CGRect)box;
 
+/**
+ * Одевает полосу перемотки в детали набора.
+ *
+ * `track` — дорожка, `played` — пройденное, `buffered` — набранное,
+ * `scrubber` — кружок. Все четыре тянутся по ширине серединой, поэтому
+ * отдаются видам готовыми `stretchableImage`: растягивает их UIKit сам,
+ * без перерисовки на каждый ход часов.
+ *
+ * Возвращает `NO` при обычном оформлении — тогда полоса остаётся
+ * крашеными видами, как была.
+ */
++ (BOOL)dressTrack:(UIImageView *)track
+              fill:(UIImageView *)fill
+              knob:(UIImageView *)knob;
+
 /** Глянец на верхней половине фигуры — «аква»-блик с резкой границей. */
 + (void)glossInContext:(CGContextRef)context
                    box:(CGRect)box

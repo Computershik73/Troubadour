@@ -468,6 +468,9 @@
             [self rebuildRows];
             [_table reloadData];
             [_table setContentOffset:CGPointZero animated:NO];
+
+            // Первая страница могла не заполнить экран — тогда дочитываем.
+            [self fillIfShort];
         });
     });
 }
@@ -586,6 +589,7 @@
                 [_items addObjectsFromArray:items];
                 [self rebuildRows];
                 [_table reloadData];
+                [self fillIfShort];
 
                 return;
             }
@@ -626,6 +630,9 @@
             }
 
             [_table endUpdates];
+
+            // И эта страница могла не заполнить экран — проверяем снова.
+            [self fillIfShort];
         });
     });
 }
@@ -1061,6 +1068,25 @@
     NSString *query = [[YTHomeView trendingQueries] objectAtIndex:[path row]];
 
     [YTNav push:[[YTSearchViewController alloc] initWithQuery:query]];
+}
+
+/**
+ * Лента короче экрана дочитывается сама.
+ *
+ * Событий прокрутки у такого списка не бывает — прокручивать нечего, —
+ * и продолжение не запрашивалось бы никогда. Зовётся после каждой
+ * уложенной страницы.
+ */
+- (void)fillIfShort {
+    if (_skeleton || _suggestions) {
+        return;
+    }
+
+    if ([_pager claimIfShort:_table]) {
+        NSLog(@"[YouTube/Главная] Лента короче экрана — просим продолжение");
+
+        [self loadNextPage];
+    }
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
