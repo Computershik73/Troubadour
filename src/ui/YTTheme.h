@@ -113,6 +113,16 @@ extern NSString *const YTThemeDark;
  */
 + (UIColor *)barText;
 
+/**
+ * Цвет подписей на карточке.
+ *
+ * Обычно это тот же основной текст. Но у объёмного оформления ячейка
+ * светлая в обеих темах — так было в ту пору, тёмный хром и светлые
+ * списки, — и белая подпись на ней пропала бы.
+ */
++ (UIColor *)cardText;
++ (UIColor *)cardSecondaryText;
+
 + (UIStatusBarStyle)statusBarStyle;
 
 @end

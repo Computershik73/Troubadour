@@ -225,8 +225,8 @@ static const CGFloat YTCardTextGap = 4;
      * создании, так и остался бы прежним, и в темноте подписи оказались бы
      * тёмными на тёмном.
      */
-    [_title setTextColor:[YTTheme primaryText]];
-    [_meta setTextColor:[YTTheme mutedText]];
+    [_title setTextColor:[YTTheme cardText]];
+    [_meta setTextColor:[YTTheme cardSecondaryText]];
 
     [_thumb setPlaceholderColor:[YTTheme surfaceAlt]];
     [_avatar setPlaceholderColor:[YTTheme avatarPlaceholder]];

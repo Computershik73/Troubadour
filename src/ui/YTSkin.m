@@ -460,7 +460,18 @@ static NSMutableDictionary *YTSkinCache(void) {
      * даёт ту же металлическую поверхность, что и у соседей. Рисунок
      * служит трафаретом: заливаем градиентом сквозь него.
      */
+    /**
+     * Обрез по рисунку идёт в координатах Core Graphics, а рисуем мы
+     * в координатах UIKit — они смотрят в разные стороны.
+     *
+     * Из-за этого значки выходили вверх ногами: колокольчик стоял вниз
+     * горлышком, стрелка «поделиться» указывала вниз. Переворачиваем
+     * холст перед обрезом и рисуем отлив уже в их системе: снизу вверх,
+     * что на экране означает сверху вниз.
+     */
     CGContextSaveGState(context);
+    CGContextTranslateCTM(context, 0, size.height);
+    CGContextScaleCTM(context, 1, -1);
     CGContextClipToMask(context, box, [flat CGImage]);
 
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
@@ -475,7 +486,7 @@ static NSMutableDictionary *YTSkinCache(void) {
         (__bridge CFArrayRef)shades, NULL);
 
     CGContextDrawLinearGradient(context, gradient,
-        CGPointMake(0, 0), CGPointMake(0, size.height), 0);
+        CGPointMake(0, size.height), CGPointMake(0, 0), 0);
 
     CGGradientRelease(gradient);
     CGColorSpaceRelease(space);
@@ -875,12 +886,15 @@ static NSMutableDictionary *YTSkinCache(void) {
     CGContextRestoreGState(context);
 
     /**
-     * Готовая подложка набора — если она к лицу теме.
+     * Ячейка светлая в обеих темах — так было в ту пору.
      *
-     * `cell_background_browse` почти белая; в тёмной теме подпись на ней
-     * пропала бы, поэтому там рисуем отлив своими цветами.
+     * Тёмный хром и светлое содержимое: полосы чёрные, а списки под ними
+     * белые. Я сперва пробовал держать ячейку в цвете темы, и в тёмной
+     * она выходила тёмным прямоугольником на тёмном фоне — никакого
+     * объёма там взяться и не могло. Подписи на карточке поэтому
+     * спрашивают свой цвет отдельно (`YTTheme cardText`).
      */
-    UIImage *ready = night ? nil : [self assetNamed:@"cell_background_browse"];
+    UIImage *ready = [self assetNamed:@"cell_background_browse"];
 
     CGContextSaveGState(context);
     [self pathInContext:context box:box radius:6];
@@ -895,11 +909,8 @@ static NSMutableDictionary *YTSkinCache(void) {
     } else {
         CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
 
-        NSArray *shades = night
-            ? [NSArray arrayWithObjects:(id)[YTColor(0x3C3C3C) CGColor],
-                                        (id)[YTColor(0x242424) CGColor], nil]
-            : [NSArray arrayWithObjects:(id)[YTColor(0xFFFFFF) CGColor],
-                                        (id)[YTColor(0xE6E9ED) CGColor], nil];
+        NSArray *shades = [NSArray arrayWithObjects:
+            (id)[YTColor(0xFFFFFF) CGColor], (id)[YTColor(0xDFE3E8) CGColor], nil];
 
         CGGradientRef gradient = CGGradientCreateWithColors(space,
             (__bridge CFArrayRef)shades, NULL);
@@ -913,8 +924,7 @@ static NSMutableDictionary *YTSkinCache(void) {
     }
 
     // Светлая кромка по верхнему краю — свет падает сверху.
-    CGContextSetFillColorWithColor(context,
-        [(night ? YTColor(0x66FFFFFF) : YTColor(0xCCFFFFFF)) CGColor]);
+    CGContextSetFillColorWithColor(context, [YTColor(0xCCFFFFFF) CGColor]);
     CGContextFillRect(context, CGRectMake(CGRectGetMinX(box), CGRectGetMinY(box),
                                           box.size.width, hair));
 
@@ -925,8 +935,7 @@ static NSMutableDictionary *YTSkinCache(void) {
                     box:CGRectInset(box, hair / 2, hair / 2)
                  radius:6];
     CGContextSetLineWidth(context, hair);
-    CGContextSetStrokeColorWithColor(context,
-        [(night ? YTColor(0x0D0D0D) : YTColor(0x9AA0A8)) CGColor]);
+    CGContextSetStrokeColorWithColor(context, [YTColor(0x8F959D) CGColor]);
     CGContextStrokePath(context);
     CGContextRestoreGState(context);
 

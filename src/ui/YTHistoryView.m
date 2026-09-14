@@ -98,6 +98,10 @@ static const CGFloat YTHiDayHeight = 18 + 10;
 
     [self setHighlights:NO];
 
+    [self setBackgroundColor:[UIColor clearColor]];
+    [self setOpaque:NO];
+    [self setContentMode:UIViewContentModeRedraw];
+
     _thumb = [[YTRoundedImageView alloc] initWithFrame:CGRectZero];
     [_thumb setCornerRadius:YTThumbRadius];
     [self addSubview:_thumb];
@@ -141,8 +145,10 @@ static const CGFloat YTHiDayHeight = 18 + 10;
 
 - (void)applyTheme {
     [_thumb setPlaceholderColor:[YTTheme surfaceAlt]];
-    [_title setTextColor:[YTTheme primaryText]];
-    [_subtitle setTextColor:[YTTheme secondaryText]];
+    [_title setTextColor:[YTTheme cardText]];
+    [_subtitle setTextColor:[YTTheme cardSecondaryText]];
+
+    [self setNeedsDisplay];
 
     // `Background="#D1000000"` у плашки в History.xaml — плотнее, чем в ленте.
     [_badgePill setFillColor:[UIColor colorWithWhite:0 alpha:0.82]];
@@ -150,6 +156,11 @@ static const CGFloat YTHiDayHeight = 18 + 10;
     // Цвета полоски — те же, что в ленте: серая дорожка, красная доля.
     [_watchedTrack setBackgroundColor:[UIColor colorWithWhite:1 alpha:0.28]];
     [_watchedFill setBackgroundColor:YTColor(0xFF0000)];
+}
+
+/** Подложка карточки: при объёмном оформлении — выпуклый лист. */
+- (void)drawRect:(CGRect)rect {
+    [YTSkin drawCardInRect:CGRectInset([self bounds], 1, 1)];
 }
 
 - (void)bind:(YTVideoItem *)item {

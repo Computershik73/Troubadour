@@ -224,6 +224,14 @@ UIColor *YTColor(uint32_t argb) {
     return [YTSkin isClassic] ? YTColor(0xF5F5F5) : [self primaryText];
 }
 
++ (UIColor *)cardText {
+    return [YTSkin isClassic] ? YTColor(0x1A1A1A) : [self primaryText];
+}
+
++ (UIColor *)cardSecondaryText {
+    return [YTSkin isClassic] ? YTColor(0x5A6068) : [self secondaryText];
+}
+
 + (UIStatusBarStyle)statusBarStyle {
     // На тёмном фоне нужны светлые значки. UIStatusBarStyleLightContent
     // существует с iOS 5.0 — ровно с нашей нижней границы.

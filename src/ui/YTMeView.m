@@ -74,6 +74,10 @@ static const CGFloat YTHistoryThumb = 90;
 
     [self setHighlights:NO];
 
+    [self setBackgroundColor:[UIColor clearColor]];
+    [self setOpaque:NO];
+    [self setContentMode:UIViewContentModeRedraw];
+
     _thumb = [[YTRoundedImageView alloc] initWithFrame:CGRectZero];
 
     // Скругление то же, что у карточек ленты: `CornerRadius="8"`
@@ -125,8 +129,11 @@ static const CGFloat YTHistoryThumb = 90;
 
 - (void)applyTheme {
     [_thumb setPlaceholderColor:[YTTheme surfaceAlt]];
-    [_title setTextColor:[YTTheme primaryText]];
-    [_subtitle setTextColor:[YTTheme secondaryText]];
+    [_title setTextColor:[YTTheme cardText]];
+    [_subtitle setTextColor:[YTTheme cardSecondaryText]];
+
+    // Подложка могла смениться вместе с оформлением — перерисуемся.
+    [self setNeedsDisplay];
 
     // `Background="#D1000000"` — плашка здесь чуть плотнее, чем в ленте.
     [_badgePill setFillColor:[UIColor colorWithWhite:0 alpha:0.82]];
@@ -134,6 +141,12 @@ static const CGFloat YTHistoryThumb = 90;
     // Цвета полоски — те же, что в ленте: серая дорожка, красная доля.
     [_watchedTrack setBackgroundColor:[UIColor colorWithWhite:1 alpha:0.28]];
     [_watchedFill setBackgroundColor:YTColor(0xFF0000)];
+}
+
+/** Подложка плитки: при объёмном оформлении — выпуклый лист. */
+- (void)drawRect:(CGRect)rect {
+    [YTSkin drawCardInRect:CGRectInset(
+        CGRectMake(0, 0, YTHistoryCard, [self bounds].size.height), 1, 1)];
 }
 
 - (void)bind:(YTVideoItem *)item {
@@ -421,8 +434,15 @@ static const CGFloat YTHistoryThumb = 90;
         [YTNav push:[[YTHistoryViewController alloc] init]];
     }];
 
+    /**
+     * Полка ложится **под** заголовок.
+     *
+     * Заголовок к этому мигу уже добавлен на страницу, и обычное
+     * добавление положило бы полку поверх него: подписи «История»
+     * и «Скачанные» пропали под ней целиком.
+     */
     _historyShelf = [[YTSkinShelfView alloc] initWithFrame:CGRectZero];
-    [_page addSubview:_historyShelf];
+    [_page insertSubview:_historyShelf belowSubview:_historyHeader];
 
     _historyTitle = YTLabel(YTFontSemiBold(18), [YTTheme primaryText], 1);
     [_historyTitle setText:YTLoc(@"История  ›")];
@@ -462,7 +482,7 @@ static const CGFloat YTHistoryThumb = 90;
     }];
 
     _downloadsShelf = [[YTSkinShelfView alloc] initWithFrame:CGRectZero];
-    [_page addSubview:_downloadsShelf];
+    [_page insertSubview:_downloadsShelf belowSubview:_downloadsHeader];
 
     _downloadsTitle = YTLabel(YTFontSemiBold(18), [YTTheme primaryText], 1);
     [_downloadsTitle setText:YTLoc(@"Скачанные  ›")];
