@@ -769,7 +769,8 @@
                 [_rows addObject:[NSDictionary dictionaryWithObjectsAndKeys:
                     [NSNumber numberWithUnsignedInteger:index], @"more",
                     [group objectForKey:@"loading"] != nil
-                        ? @"Загрузка…" : @"Показать ещё", @"label", nil]];
+                        ? YTLoc(@"Загрузка…")
+                        : YTLoc(@"Показать ещё"), @"label", nil]];
             }
         }
 

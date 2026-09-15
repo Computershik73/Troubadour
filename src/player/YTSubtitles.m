@@ -2,6 +2,7 @@
 
 #import "YTHttp.h"
 #import "YTJson.h"
+#import "YTStrings.h"
 
 @implementation YTSubtitleTrack
 
@@ -11,7 +12,9 @@
     }
 
     // Пометка та же, что в оригинале: машинную дорожку надо отличать.
-    return _automatic ? [_name stringByAppendingString:@" (авто)"] : _name;
+    return _automatic
+        ? [_name stringByAppendingString:YTLoc(@" (авто)")]
+        : _name;
 }
 
 @end
