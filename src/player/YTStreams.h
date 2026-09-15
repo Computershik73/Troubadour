@@ -27,6 +27,9 @@ extern NSString *const YTSabrLostNotification;
 @property (nonatomic, copy) NSString *mimeType;
 @property (nonatomic, assign) NSInteger itag;
 @property (nonatomic, assign) NSInteger fps;
+
+/** Как ступень зовёт сам сервер: «1080p50», «720p». */
+@property (nonatomic, copy) NSString *qualityLabel;
 @property (nonatomic, assign) NSInteger bitrate;
 @property (nonatomic, assign) NSInteger averageBitrate;
 

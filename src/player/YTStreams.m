@@ -44,9 +44,56 @@ static NSInteger YTCanonicalTier(NSInteger raw) {
     return raw;
 }
 
+/**
+ * Ступень по метке сервера — «1080p50» это 1080. Ноль — метки нет.
+ *
+ * Считать её по кадру нельзя, и вот почему. У ролика 21:9 дорожка,
+ * которую YouTube зовёт `1080p50`, имеет размер 1920×800, а та, что
+ * зовётся `720p50`, — 1280×534. Считая по меньшей стороне, мы называли
+ * первую 720p, вторую 480p, а `426×178` не укладывалось ни в одну
+ * знакомую ступень и оставалось «178p».
+ *
+ * Беда не в подписи. Ступень уходит подаче полем 21, и сервер понимает
+ * её **по-своему**: просьба «720» приносила ту дорожку, которую он сам
+ * зовёт 720p, то есть нашу «480p». Человек просил 720p50, получал ровно
+ * её — но в списке она подписана 480p50, и «сейчас» стояло у неё. Спор
+ * был не о дорожке, а о её имени.
+ *
+ * Поэтому имя спрашиваем у того, кто им распоряжается. Счёт по кадру
+ * остаётся запасным ходом: у вертикальных роликов он берёт короткую
+ * сторону, иначе 1080×1920 подписывалось бы как «1920p».
+ */
+static NSInteger YTTierFromLabel(NSString *label) {
+    if ([label length] == 0) {
+        return 0;
+    }
+
+    NSInteger tier = 0;
+    NSUInteger at = 0;
+
+    while (at < [label length]) {
+        unichar letter = [label characterAtIndex:at];
+
+        if (letter < '0' || letter > '9') {
+            break;
+        }
+
+        tier = tier * 10 + (letter - '0');
+        at++;
+    }
+
+    return (tier >= 100 && tier <= 4320) ? tier : 0;
+}
+
 @implementation YTFormat
 
 - (NSInteger)qualityTier {
+    NSInteger named = YTTierFromLabel(_qualityLabel);
+
+    if (named > 0) {
+        return named;
+    }
+
     if (_width > 0 && _height > 0) {
         return YTCanonicalTier(MIN(_width, _height));
     }
@@ -146,6 +193,12 @@ static NSInteger YTCanonicalTier(NSInteger raw) {
  * и качество выбирал сервер — выбор человека не значил ничего.
  */
 + (NSInteger)tierIn:(NSDictionary *)format {
+    NSInteger named = YTTierFromLabel([YTJson textIn:format key:@"qualityLabel"]);
+
+    if (named > 0) {
+        return named;
+    }
+
     NSInteger width = [YTJson intIn:format key:@"width"];
     NSInteger height = [YTJson intIn:format key:@"height"];
 
@@ -1456,6 +1509,7 @@ static NSInteger _renewFailures = 0;
         entry.mimeType = mime;
         entry.itag = [YTJson intIn:format key:@"itag"];
         entry.fps = [YTJson intIn:format key:@"fps"];
+        entry.qualityLabel = [YTJson textIn:format key:@"qualityLabel"];
         entry.bitrate = [YTJson intIn:format key:@"bitrate"];
         entry.averageBitrate = [YTJson intIn:format key:@"averageBitrate"];
 
