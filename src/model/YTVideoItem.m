@@ -109,13 +109,57 @@ static NSString *YTLockupThumbnail(NSDictionary *renderer, NSInteger minWidth) {
  *     строка 0, пункт 0 — автор;
  *     строка 1, пункт 0 — просмотры, пункт 1 — давность.
  */
-/** Сколько строк метаданных у карточки: по ним видно, что в них лежит. */
-static NSUInteger YTLockupMetadataRows(NSDictionary *renderer) {
+/**
+ * Строки метаданных, в которых **есть текст**.
+ *
+ * Не всякая строка текстовая: рядом с ними сервер кладёт строку
+ * со значками («Новинка», «4K») — у неё вместо `metadataParts` лежит
+ * `badges`. Прежний разбор считал строки подряд и брал последнюю;
+ * на карточке со значком последней оказывалась именно она, и от
+ * карточки оставался один заголовок — ни просмотров, ни давности.
+ */
+static NSArray *YTLockupTextRows(NSDictionary *renderer) {
     NSDictionary *holder = [YTJson findFirst:@"contentMetadataViewModel"
                                           in:renderer limit:600];
 
-    return [[YTJson arrayIn:holder key:@"metadataRows"] count];
+    NSArray *rows = [YTJson arrayIn:holder key:@"metadataRows"];
+
+    NSMutableArray *out = [NSMutableArray array];
+
+    for (NSUInteger row = 0; row < [rows count]; row++) {
+        NSArray *parts = [YTJson arrayIn:[YTJson objectAt:rows index:row]
+                                     key:@"metadataParts"];
+
+        if ([parts count] > 0) {
+            [out addObject:[NSNumber numberWithUnsignedInteger:row]];
+        }
+    }
+
+    return out;
 }
+
+/**
+ * Объявлен наперёд: правило автора ниже берёт им имя из строки, а сама
+ * выборка определена дальше по файлу.
+ */
+static NSString *YTLockupMetadataPart(NSDictionary *renderer,
+                                      NSUInteger row, NSUInteger part);
+
+/** Сколько частей в строке метаданных. */
+static NSUInteger YTLockupPartsIn(NSDictionary *renderer, NSUInteger row) {
+    NSDictionary *holder = [YTJson findFirst:@"contentMetadataViewModel"
+                                          in:renderer limit:600];
+
+    NSArray *rows = [YTJson arrayIn:holder key:@"metadataRows"];
+
+    if (row >= [rows count]) {
+        return 0;
+    }
+
+    return [[YTJson arrayIn:[YTJson objectAt:rows index:row]
+                        key:@"metadataParts"] count];
+}
+
 
 /**
  * В какой строке метаданных лежит имя канала — и какое оно.
@@ -168,7 +212,60 @@ static NSInteger YTLockupAuthorRow(NSDictionary *renderer, NSString **name) {
         }
     }
 
-    return -1;
+    /**
+     * Ссылки в пункте нет вовсе — считаем по устройству строк.
+     *
+     * Так отвечают карточки похожих: у них пункт с именем канала это
+     * голое `{"text": {"content": "…"}}`, а переход на канал лежит
+     * не в нём, а у кружка автора. Правило по ссылке там не срабатывает
+     * никогда — оттого автора у похожих и не бывало почти никогда.
+     *
+     * Строки при этом устроены однообразно: сперва автор одним пунктом,
+     * затем числа — просмотры и давность — двумя. Значит, строка
+     * с числами это последняя текстовая строка, у которой пунктов больше
+     * одного, а автор — текстовая строка перед ней. Одна-единственная
+     * строка авторской не считается: на странице канала в ней стоят
+     * просмотры, а не имя.
+     */
+    NSArray *textRows = YTLockupTextRows(renderer);
+
+    if ([textRows count] < 2) {
+        return -1;
+    }
+
+    NSInteger numbers = -1;
+
+    for (NSNumber *row in textRows) {
+        if (YTLockupPartsIn(renderer, [row unsignedIntegerValue]) > 1) {
+            numbers = (NSInteger)[row unsignedIntegerValue];
+        }
+    }
+
+    if (numbers < 0) {
+        return -1;
+    }
+
+    NSInteger before = -1;
+
+    for (NSNumber *row in textRows) {
+        if ((NSInteger)[row unsignedIntegerValue] < numbers) {
+            before = (NSInteger)[row unsignedIntegerValue];
+        }
+    }
+
+    if (before < 0) {
+        return -1;
+    }
+
+    NSString *found = YTLockupMetadataPart(renderer, (NSUInteger)before, 0);
+
+    if ([found length] == 0) {
+        return -1;
+    }
+
+    if (name != NULL) { *name = found; }
+
+    return before;
 }
 
 static NSString *YTLockupMetadataPart(NSDictionary *renderer,
@@ -577,6 +674,38 @@ static BOOL YTRendererIsLive(id renderer, NSDictionary *badge) {
         item.channelId = browseId;
     }
 
+    /**
+     * Кружок автора у новой разметки — у самой карточки, а не у имени.
+     *
+     * `decoratedAvatarViewModel` несёт и картинку, и переход на канал.
+     * Прежде у карточек похожих не было ни того, ни другого: кружок
+     * искали под ключом `channelThumbnail`, которого в этой разметке
+     * нет вовсе.
+     */
+    NSDictionary *decorated = [YTJson findFirst:@"decoratedAvatarViewModel"
+                                             in:renderer limit:600];
+
+    if (decorated != nil) {
+        if (item.channelThumbnail == nil) {
+            NSDictionary *avatar = [YTJson findFirst:@"avatarViewModel"
+                                                  in:decorated limit:200];
+
+            item.channelThumbnail = [YTJson thumbnailIn:
+                [YTJson objectIn:avatar key:@"image"] key:@"sources" minWidth:88];
+        }
+
+        if ([item.channelId length] == 0) {
+            NSDictionary *toChannel = [YTJson findFirst:@"browseEndpoint"
+                                                     in:decorated limit:200];
+
+            NSString *identifier = [YTJson textIn:toChannel key:@"browseId"];
+
+            if ([identifier hasPrefix:@"UC"]) {
+                item.channelId = identifier;
+            }
+        }
+    }
+
     item.thumbnail = [YTJson thumbnailIn:renderer key:@"thumbnail" minWidth:480];
 
     if (item.thumbnail == nil) {
@@ -681,9 +810,20 @@ static BOOL YTRendererIsLive(id renderer, NSDictionary *badge) {
      * Прежний разбор брал последнюю строку всегда, и в просмотры попадало
      * имя канала — то же самое, что уже стоит автором.
      */
-    NSInteger last = (NSInteger)YTLockupMetadataRows(renderer) - 1;
+    NSArray *textRows = YTLockupTextRows(renderer);
 
-    if (last == authorRow) { last -= 1; }
+    NSInteger last = [textRows count] > 0
+        ? (NSInteger)[[textRows lastObject] unsignedIntegerValue] : -1;
+
+    if (last == authorRow) {
+        last = -1;
+
+        for (NSNumber *row in textRows) {
+            if ((NSInteger)[row unsignedIntegerValue] < authorRow) {
+                last = (NSInteger)[row unsignedIntegerValue];
+            }
+        }
+    }
 
     if (last >= 0) {
         if (item.viewCount == nil) {
