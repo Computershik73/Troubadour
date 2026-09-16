@@ -383,9 +383,28 @@ static double YTWatchedShareIn(id renderer) {
  * знает и о просмотрах с других устройств, и о том, что ролик досмотрен.
  */
 static NSTimeInterval YTResumeAtIn(id renderer) {
-    NSDictionary *watch = [YTJson findFirst:@"watchEndpoint" in:renderer limit:600];
+    /**
+     * Берём не первый попавшийся переход, а тот, где место названо.
+     *
+     * `watchEndpoint` у карточки не один: первым лежит обычный переход
+     * к ролику, и секунды в нём нет — она стоит у того, что рядом
+     * с долей просмотра. Прежний разбор брал первый и получал ноль,
+     * а ролик начинался сначала, хотя сервер честно присылал и долю,
+     * и секунду. Замер на Android по живому ответу истории:
+     * «доля 0,10 место 0; доля 0,10 место 0; доля 0,18 место 2037».
+     */
+    NSArray *watches = [YTJson findAll:@"watchEndpoint" in:renderer limit:600];
 
-    return (NSTimeInterval)[YTJson intIn:watch key:@"startTimeSeconds"];
+    for (NSUInteger index = 0; index < [watches count]; index++) {
+        NSInteger at = [YTJson intIn:[watches objectAtIndex:index]
+                                 key:@"startTimeSeconds"];
+
+        if (at > 0) {
+            return (NSTimeInterval)at;
+        }
+    }
+
+    return 0;
 }
 
 static BOOL YTRendererIsLive(id renderer, NSDictionary *badge) {
