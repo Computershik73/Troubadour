@@ -1,6 +1,6 @@
 Package: ru.computershik.troubadour
 Name: Troubadour
-Version: 1.4
+Version: 1.5
 Architecture: iphoneos-arm
 Description: Клиент YouTube для iOS 5.1 и новее
 Maintainer: computershik
