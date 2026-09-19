@@ -73,16 +73,23 @@ static NSString *const YTRepo = @"https://computershik73.github.io/repo/";
     /**
      * Сперва связка — она и есть то, что сейчас работает.
      *
-     * `CFBundleVersion` вписывается при сборке пакета и несёт полный
-     * номер вида «1.4-207+debug». Спрашивать `dpkg` первым нельзя:
-     * он помнит последний поставленный **пакет**, а приложение нередко
-     * ставят из `.ipa` — тогда его запись отстаёт на сотню сборок,
-     * и обновление предлагается на версию старше нынешней.
+     * `CFBundleVersion` вписывается при сборке пакета и несёт версию
+     * целиком: у беты «1.4-207+debug», у выпуска просто «1.5». Спрашивать
+     * `dpkg` первым нельзя: он помнит последний поставленный **пакет**,
+     * а приложение нередко ставят из `.ipa` — тогда его запись отстаёт
+     * на сотню сборок, и обновление предлагается на версию старше нынешней.
+     *
+     * Прежде связке верили только при чёрточке в номере — по ней отличали
+     * полную версию от короткой «1.4», какой она была в связке до 1.4-208.
+     * С выпуском 1.5 правило обернулось против себя: у выпуска чёрточки
+     * нет вовсе, и номер снова шёл спрашиваться у `dpkg`. На устройстве,
+     * где прежде стояла бета пакетом, тот честно называл её — и человеку
+     * предлагали «обновиться» на то, что у него уже работает.
      */
     NSString *own = [[[NSBundle mainBundle] infoDictionary]
         objectForKey:@"CFBundleVersion"];
 
-    if ([own rangeOfString:@"-"].location != NSNotFound) {
+    if ([own length] > 0) {
         return own;
     }
 
@@ -158,6 +165,14 @@ static NSString *const YTRepo = @"https://computershik73.github.io/repo/";
 
 + (NSString *)channelUrl {
     return [self usesBeta] ? [YTRepo stringByAppendingString:@"beta/"] : YTRepo;
+}
+
++ (NSURL *)pageURL {
+    NSString *where = [[[self channelUrl]
+        stringByAppendingString:@"apps/"]
+        stringByAppendingFormat:@"%@/", YTPackage];
+
+    return [NSURL URLWithString:where];
 }
 
 #pragma mark Сравнение версий
@@ -614,9 +629,14 @@ static NSComparisonResult YTCompareChunk(NSString *left, NSString *right) {
 }
 
 + (void)checkOnLaunch {
-    if (![self canInstall]) {
-        return;
-    }
+    /**
+     * Спрашиваем и тогда, когда ставить нечем.
+     *
+     * Поставленный из `.ipa` тоже вправе знать, что вышло свежее, —
+     * просто вести его надо не к `dpkg`, а на страницу источника.
+     * Прежде здесь стоял отказ, и такой человек не узнавал о выпусках
+     * вовсе: проверка молчала, а в настройки за ней мало кто ходит.
+     */
 
     NSUserDefaults *store = [NSUserDefaults standardUserDefaults];
 

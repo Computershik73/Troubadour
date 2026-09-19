@@ -9,6 +9,7 @@
 @implementation YTUpdatePrompt {
     NSDictionary *_found;
     UIAlertView *_offer;
+    UIAlertView *_page;
     UIAlertView *_working;
 }
 
@@ -64,27 +65,6 @@
 }
 
 - (void)checkAloud {
-    if (![YTUpdate canInstall]) {
-        /**
-         * Две разные беды — и сказать о них надо по-разному.
-         *
-         * Нет `dpkg` — значит джейлбрейка нет вовсе. А вот помощник без
-         * прав root — это почти всегда установка из `.ipa`: бит setuid
-         * переживает только установку пакетом. Человеку в этом случае
-         * нужно не «поставьте джейлбрейк», а «поставьте один раз пакетом».
-         */
-        [self say:YTLoc(@"Обновление")
-             text:[YTUpdate helperIsRoot]
-            ? YTLoc(@"Ставить пакет нечем: в системе нет dpkg. Обновление "
-                    @"поверх себя работает только с джейлбрейком.")
-            : YTLoc(@"Приложение установлено из .ipa, и у помощника нет прав "
-                    @"root — поставить пакет он не сможет. Установите "
-                    @"версию из источника один раз через Cydia или Sileo, "
-                    @"дальше обновления пойдут отсюда.")];
-
-        return;
-    }
-
     [self say:YTLoc(@"Обновление") text:YTLoc(@"Спрашиваем источник…")];
 
     [YTUpdate check:^(NSDictionary *found) {
@@ -105,7 +85,25 @@
 }
 
 - (void)offer:(NSDictionary *)found {
-    if (found == nil || _offer != nil) {
+    if (found == nil || _offer != nil || _page != nil) {
+        return;
+    }
+
+    /**
+     * Ставить поверх себя может не всякая установка.
+     *
+     * Помощнику нужен бит setuid, а тот переживает только установку
+     * пакетом: из `.ipa` он приезжает обычным файлом, и `dpkg` от него
+     * прав не получит. Ломиться в установку в таком случае — обещать
+     * то, чего не выйдет; вместо этого отправляем на страницу источника,
+     * где лежит тот же файл, и человек берёт его сам.
+     *
+     * Сюда же попадает устройство без джейлбрейка: `dpkg` там нет вовсе,
+     * а страница одинаково годится и для него.
+     */
+    if (![YTUpdate canInstall]) {
+        [self offerPage:found];
+
         return;
     }
 
@@ -125,7 +123,39 @@
     [_offer show];
 }
 
+/**
+ * Окно с уходом на страницу источника.
+ *
+ * Открываем в системном браузере, а не своим веб-видом: файл оттуда
+ * забирает Safari, отдавая его дальше установщику, — внутри приложения
+ * этот путь оборвался бы на скачивании.
+ */
+- (void)offerPage:(NSDictionary *)found {
+    NSString *text = YTLocF(@"Доступна версия %@. Поставить её поверх себя "
+                            @"эта установка не может — приложение пришло "
+                            @"из .ipa. Открыть страницу с новой версией?",
+                            [found objectForKey:@"version"]);
+
+    _page = [[UIAlertView alloc] initWithTitle:YTLoc(@"Обновление")
+                                       message:text
+                                      delegate:self
+                             cancelButtonTitle:YTLoc(@"Потом")
+                             otherButtonTitles:YTLoc(@"Открыть"), nil];
+
+    [_page show];
+}
+
 - (void)alertView:(UIAlertView *)alert clickedButtonAtIndex:(NSInteger)index {
+    if (alert == _page) {
+        _page = nil;
+
+        if (index != [alert cancelButtonIndex]) {
+            [[UIApplication sharedApplication] openURL:[YTUpdate pageURL]];
+        }
+
+        return;
+    }
+
     if (alert != _offer) {
         return;
     }
