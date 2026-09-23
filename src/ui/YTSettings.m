@@ -25,6 +25,7 @@ static NSString *const YTSubtitlePlaceXKey = @"YTSubtitlePlaceX";
 static NSString *const YTInterfaceLanguageKey = @"YTInterfaceLanguage";
 static NSString *const YTSixtyFramesKey = @"YTSixtyFrames";
 static NSString *const YTHideShortsKey = @"YTHideShorts";
+static NSString *const YTDislikesKey = @"YTDislikes";
 
 /**
  * Ключ, которого нет в хранилище, и ключ со значением 0 в NSUserDefaults
@@ -556,6 +557,16 @@ static void YTNotifyChanged(void) {
 
 + (void)setHidesShorts:(BOOL)hides {
     YTSetFlag(YTHideShortsKey, hides);
+
+    YTNotifyChanged();
+}
+
++ (BOOL)showsDislikes {
+    return YTFlag(YTDislikesKey, YES);
+}
+
++ (void)setShowsDislikes:(BOOL)shows {
+    YTSetFlag(YTDislikesKey, shows);
 
     YTNotifyChanged();
 }

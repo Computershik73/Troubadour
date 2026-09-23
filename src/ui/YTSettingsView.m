@@ -751,6 +751,7 @@ static const CGFloat YTSheetOption = 42;
     YTSettingsRow *_autoplayQueue;
     YTSettingsRow *_autoplayShorts;
     YTSettingsRow *_hideShorts;
+    YTSettingsRow *_dislikes;
     YTSettingsRow *_about;
 }
 
@@ -1028,6 +1029,17 @@ static const CGFloat YTSheetOption = 42;
                                    @"ролики из всех лент")];
     [_hideShorts useToggle];
 
+    _dislikes = [self rowWithIcon:@"pl_dislike"
+                            label:YTLoc(@"Показывать дизлайки")
+                           action:^{
+        [YTSettings setShowsDislikes:![YTSettings showsDislikes]];
+        [weakSelf refresh];
+    }];
+
+    [_dislikes setHintText:YTLoc(@"Число даёт Return YouTube Dislike: "
+                                 @"сам YouTube его больше не показывает")];
+    [_dislikes useToggle];
+
     /** О программе. */
     [self sectionTitled:YTLoc(@"О программе")];
 
@@ -1182,6 +1194,7 @@ static const CGFloat YTSheetOption = 42;
     [_autoplayQueue setToggleOn:[YTSettings autoplayNextInQueue]];
     [_autoplayShorts setToggleOn:[YTSettings autoplayNextShort]];
     [_hideShorts setToggleOn:[YTSettings hidesShorts]];
+    [_dislikes setToggleOn:[YTSettings showsDislikes]];
 
     /**
      * Спрятали Shorts — прячем и настройку их автолистания: она

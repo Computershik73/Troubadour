@@ -20,6 +20,7 @@
 #import "YTUtil.h"
 #import "YTVideoItem.h"
 #import "YTWebAuth.h"
+#import "YTDislikes.h"
 
 /**
  * Числа — из Shorts.xaml.
@@ -84,6 +85,9 @@ static const CGFloat YTShortGap = 14;
 /** Подписи под кнопками; пустое значение прячет подпись. */
 - (void)applyLikes:(NSString *)likes comments:(NSString *)comments;
 
+/** Число дизлайков под значком; nil — подписи нет, значок по центру. */
+- (void)applyDislikes:(NSString *)dislikes;
+
 /** Кружок автора; лента reel его не присылает, он приходит позже. */
 - (void)applyAvatar:(NSString *)url;
 
@@ -109,6 +113,7 @@ static const CGFloat YTShortGap = 14;
     NSMutableArray *_buttons;
 
     UILabel *_likeCount;
+    UILabel *_dislikeCount;
     UILabel *_commentCount;
 
     /** Правый верхний угол: лупа, шестерёнка и «ещё». */
@@ -203,6 +208,11 @@ static const CGFloat YTShortGap = 14;
     _commentCount = YTLabel(YTFontRegular(10), [UIColor whiteColor], 1);
     [_commentCount setTextAlignment:NSTextAlignmentCenter];
     [self addSubview:_commentCount];
+
+    // Число дизлайков по Return YouTube Dislike — так же, под своим значком.
+    _dislikeCount = YTLabel(YTFontRegular(10), [UIColor whiteColor], 1);
+    [_dislikeCount setTextAlignment:NSTextAlignmentCenter];
+    [self addSubview:_dislikeCount];
 
     /**
      * Полоса воспроизведения — тонкая, у самого низа.
@@ -320,6 +330,12 @@ static const CGFloat YTShortGap = 14;
 - (void)applyLikes:(NSString *)likes comments:(NSString *)comments {
     [_likeCount setText:likes];
     [_commentCount setText:comments];
+
+    [self setNeedsLayout];
+}
+
+- (void)applyDislikes:(NSString *)dislikes {
+    [_dislikeCount setText:dislikes];
 
     [self setNeedsLayout];
 }
@@ -484,6 +500,7 @@ static const CGFloat YTShortGap = 14;
         UILabel *count = nil;
 
         if (i == 0) { count = _likeCount; }
+        else if (i == 1) { count = _dislikeCount; }
         else if (i == 2) { count = _commentCount; }
 
         BOOL titled = ([[count text] length] > 0);
@@ -2221,6 +2238,7 @@ static const CGFloat YTShortGap = 14;
              * следом, отдельным заходом.
              */
             [page applyLikes:nil comments:nil];
+            [page applyDislikes:nil];
 
             _player = [AVPlayer playerWithURL:[NSURL URLWithString:local]];
 
@@ -2299,6 +2317,24 @@ static const CGFloat YTShortGap = 14;
                   page:(YTShortPage *)page
               playback:(NSDictionary *)playback
             generation:(NSInteger)generation {
+    /**
+     * Число дизлайков — своим запросом, рядом с описанием, а не после
+     * него: сервис сторонний, и ждать друг друга им незачем.
+     */
+    if ([YTSettings showsDislikes]) {
+        YTAsync(^{
+            NSNumber *count = [YTDislikes countFor:videoId];
+
+            YTMain(^{
+                if (count == nil || ![_generation isCurrent:generation]) {
+                    return;
+                }
+
+                [page applyDislikes:YTCompactCount([count longLongValue])];
+            });
+        });
+    }
+
     YTAsync(^{
         NSDictionary *details = [YTApi shortsDetails:videoId known:playback];
 

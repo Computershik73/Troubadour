@@ -369,6 +369,24 @@ typedef enum {
 + (BOOL)rate:(NSString *)videoId as:(NSString *)action params:(NSString *)params;
 
 /**
+ * Плейлисты учётной записи для «Сохранить» — порт
+ * `GetSavePlaylistStatesAsync` из UWP-оригинала.
+ *
+ * Каждая запись — изменяемый словарь с `playlistId`, `title`
+ * и `contains` (NSNumber: лежит ли там ролик). nil — не ответил ни один
+ * клиент. Пустым список не бывает: «Смотреть позже» есть у всех,
+ * и ответ без единого плейлиста считается отказом.
+ */
++ (NSArray *)playlistSaveStates:(NSString *)videoId;
+
+/**
+ * Кладёт ролик в плейлист или убирает из него — порт
+ * `SetVideoSavedToPlaylistAsync`. «Понравившиеся» (`LL`) правятся
+ * лайком, как в оригинале.
+ */
++ (BOOL)setVideo:(NSString *)videoId saved:(BOOL)save inPlaylist:(NSString *)playlistId;
+
+/**
  * Все каналы учётной записи — порт `ParseAccountInfoFromAccountsList`,
  * только там берётся один, а здесь весь список.
  *

@@ -4445,6 +4445,169 @@ static void YTCollectRendererNames(id node, NSMutableDictionary *counts, NSInteg
     return NO;
 }
 
+/**
+ * «Сохранить» — путь тот же, каким ходит само TV-приложение YouTube,
+ * и это видно по его коду в дампе `yttv5`: `playlist/get_add_to_playlist`
+ * с `videoIds` отдаёт плейлисты с отметкой `containsSelectedVideos`,
+ * а нажатие шлёт `browse/edit_playlist` с `playlistId` и `actions`.
+ *
+ * Клиенты — TVHTML5 первым, MWEB и WEB следом, как у оценки: токен
+ * у нас от входа по QR-коду, и принимает его в паре с собой именно
+ * TV-клиент. Оригинал пишет о том же: веб-клиент с таким токеном
+ * список отдаёт, но отметку «уже лежит здесь» может не прислать.
+ * TubeReplacer ходит веб-куками, и его форму брать было нельзя.
+ */
++ (NSString *)savePlaylistIdFrom:(NSString *)playlistId {
+    NSString *value = [playlistId stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceCharacterSet]];
+
+    // В списке у плейлиста бывает приставка `VL` — в правке её нет.
+    if ([value hasPrefix:@"VL"] && [value length] > 2) {
+        return [value substringFromIndex:2];
+    }
+
+    return value;
+}
+
++ (NSArray *)playlistSaveStates:(NSString *)videoId {
+    if ([videoId length] == 0 || ![YTAuth isSignedIn]) {
+        return nil;
+    }
+
+    NSMutableDictionary *body = [NSMutableDictionary dictionary];
+
+    [body setObject:[NSArray arrayWithObject:videoId] forKey:@"videoIds"];
+    [body setObject:[NSNumber numberWithBool:NO] forKey:@"excludeWatchLater"];
+
+    NSArray *clients = [NSArray arrayWithObjects:@"TVHTML5", @"MWEB", @"WEB", nil];
+
+    for (NSString *client in clients) {
+        NSDictionary *json = [self post:@"playlist/get_add_to_playlist"
+                                   body:body
+                                 client:client
+                              authorize:YES
+                                    ttl:0];
+
+        NSArray *options = [YTJson findAll:@"playlistAddToOptionRenderer"
+                                        in:json
+                                     limit:16000];
+
+        if ([options count] == 0) {
+            NSLog(@"[YouTube/Плейлисты] Список для «Сохранить»: пусто от %@", client);
+
+            continue;
+        }
+
+        NSMutableSet *seen = [NSMutableSet set];
+        NSMutableArray *result = [NSMutableArray array];
+        NSUInteger saved = 0;
+
+        for (NSDictionary *option in options) {
+            NSString *playlistId = [self savePlaylistIdFrom:
+                [YTJson stringIn:option key:@"playlistId"]];
+
+            if ([playlistId length] == 0 || [seen containsObject:playlistId]) {
+                continue;
+            }
+
+            [seen addObject:playlistId];
+
+            NSString *title = [YTJson renderedText:option key:@"title"];
+
+            /**
+             * Отметка приходит строкой — `ALL`, `SOME` или `NONE`, — а у иных
+             * клиентов и логическим значением. «Частично» бывает, когда
+             * спрашивают о нескольких роликах разом; у одного это то же «да».
+             */
+            id mark = [option objectForKey:@"containsSelectedVideos"];
+
+            BOOL contains = NO;
+
+            if ([mark isKindOfClass:[NSString class]]) {
+                contains = [mark caseInsensitiveCompare:@"ALL"] == NSOrderedSame
+                        || [mark caseInsensitiveCompare:@"SOME"] == NSOrderedSame
+                        || [mark caseInsensitiveCompare:@"true"] == NSOrderedSame;
+            } else if ([mark respondsToSelector:@selector(boolValue)]) {
+                contains = [mark boolValue];
+            }
+
+            if (contains) {
+                saved++;
+            }
+
+            NSMutableDictionary *state = [NSMutableDictionary dictionary];
+
+            [state setObject:playlistId forKey:@"playlistId"];
+            [state setObject:([title length] > 0 ? title : playlistId) forKey:@"title"];
+            [state setObject:[NSNumber numberWithBool:contains] forKey:@"contains"];
+
+            [result addObject:state];
+        }
+
+        NSLog(@"[YouTube/Плейлисты] Для «Сохранить»: %lu от %@, с роликом %lu",
+              (unsigned long)[result count], client, (unsigned long)saved);
+
+        return result;
+    }
+
+    return nil;
+}
+
++ (BOOL)setVideo:(NSString *)videoId saved:(BOOL)save inPlaylist:(NSString *)playlistId {
+    if ([videoId length] == 0 || [playlistId length] == 0 || ![YTAuth isSignedIn]) {
+        return NO;
+    }
+
+    NSString *target = [self savePlaylistIdFrom:playlistId];
+
+    // «Понравившиеся» — не плейлист, который правят: туда кладёт лайк.
+    if ([target isEqualToString:@"LL"]) {
+        return [self rate:videoId as:(save ? @"like" : @"none") params:nil];
+    }
+
+    NSMutableDictionary *action = [NSMutableDictionary dictionary];
+
+    if (save) {
+        [action setObject:@"ACTION_ADD_VIDEO" forKey:@"action"];
+        [action setObject:videoId forKey:@"addedVideoId"];
+    } else {
+        [action setObject:@"ACTION_REMOVE_VIDEO_BY_VIDEO_ID" forKey:@"action"];
+        [action setObject:videoId forKey:@"removedVideoId"];
+    }
+
+    NSMutableDictionary *body = [NSMutableDictionary dictionary];
+
+    [body setObject:target forKey:@"playlistId"];
+    [body setObject:[NSArray arrayWithObject:action] forKey:@"actions"];
+
+    /**
+     * Узел — `browse/edit_playlist`, а не `playlist/edit`: так его называет
+     * сам сервер в `playlistEditEndpoint`, а оригинал отдельно
+     * предупреждает, что `playlist/edit` на такое тело отказывает всегда.
+     */
+    NSArray *clients = [NSArray arrayWithObjects:@"TVHTML5", @"MWEB", @"WEB", nil];
+
+    for (NSString *client in clients) {
+        NSDictionary *json = [self post:@"browse/edit_playlist"
+                                   body:body
+                                 client:client
+                              authorize:YES
+                                    ttl:0];
+
+        if (json != nil) {
+            NSLog(@"[YouTube/Плейлисты] %@ %@ %@: принято (%@)",
+                  videoId, save ? @"в" : @"из", target, client);
+
+            return YES;
+        }
+
+        NSLog(@"[YouTube/Плейлисты] %@ %@ %@: отказ от %@",
+              videoId, save ? @"в" : @"из", target, client);
+    }
+
+    return NO;
+}
+
 + (BOOL)setSubscribed:(BOOL)subscribed channel:(NSString *)channelId {
     if ([channelId length] == 0 || ![YTAuth isSignedIn]) {
         return NO;

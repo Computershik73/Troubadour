@@ -70,6 +70,10 @@ $icons = @(
     @{ src = "player\dislike_clicked.png";    name = "pl_dislike_on";   size = 22 },
     @{ src = "player\comments.png";           name = "pl_comments";     size = 22 },
     @{ src = "player\send.png";               name = "pl_send";         size = 22 },
+    # «Сохранить» в ряду действий: в оригинале `Assets/save.png` и
+    # `save_clicked.png` — вторым отмечают ролик, уже лежащий в плейлисте.
+    @{ src = "save.png";                      name = "pl_save";         size = 22 },
+    @{ src = "save_clicked.png";              name = "pl_save_on";      size = 22 },
     @{ src = "player\reload.png";             name = "pl_reload";       size = 24 },
     @{ src = "player\download.png";           name = "pl_download";     size = 24 },
 

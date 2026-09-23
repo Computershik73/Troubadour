@@ -19,6 +19,7 @@
 #import "YTMiniPlayer.h"
 #import "YTNowPlaying.h"
 #import "YTAuth.h"
+#import "YTDislikes.h"
 #import "YTSabr.h"
 #import "YTSponsorBlock.h"
 #import "YTStoryboard.h"
@@ -187,11 +188,20 @@ static const CGFloat YTPageMargin = 16;
     YTSettingsSheet *_bell;
     NSInteger _notifications;
 
+    /**
+     * Ряд действий прокручивается вбок — как `VideoActionsScrollViewer`
+     * в оригинале. Всё, что ниже, лежит в нём, а не прямо на странице.
+     */
+    UIScrollView *_actionScroll;
+
     YTPillView *_votePill;
     UIImageView *_likeIcon;
     UILabel *_likeCount;
     UIView *_voteSeparator;
     UIImageView *_dislikeIcon;
+
+    /** Число дизлайков по Return YouTube Dislike — справа от значка. */
+    UILabel *_dislikeCount;
     YTPillView *_sharePill;
 
     /**
@@ -219,6 +229,21 @@ static const CGFloat YTPageMargin = 16;
     YTTappableView *_downloadTouch;
     UIImageView *_downloadIcon;
     UILabel *_downloadLabel;
+
+    /**
+     * «Сохранить» — между «Поделиться» и «Скачать», как в оригинале.
+     * Видна только вошедшему: плейлисты бывают лишь у учётной записи.
+     */
+    YTPillView *_savePill;
+    YTTappableView *_saveTouch;
+    UIImageView *_saveIcon;
+    UILabel *_saveLabel;
+
+    /** Лежит ли ролик хоть в одном плейлисте — по этому красится значок. */
+    BOOL _savedSomewhere;
+
+    YTSettingsSheet *_saveSheet;
+    NSArray *_saveStates;
 
     /**
      * Сведения о ролике держим у себя — их берёт загрузчик.
@@ -1809,23 +1834,42 @@ static const CGFloat YTPageMargin = 16;
     }
     [_page addSubview:_subscribeTouch];
 
+    /**
+     * Ряд действий — в своей прокрутке, как в оригинале.
+     *
+     * `scrollsToTop` снимаем обязательно: когда таких прокруток на экране
+     * больше одной, iOS не отдаёт нажатие по строке состояния ни одной
+     * из них, и страница переставала бы уезжать наверх.
+     */
+    _actionScroll = [[UIScrollView alloc] initWithFrame:CGRectZero];
+    [_actionScroll setShowsHorizontalScrollIndicator:NO];
+    [_actionScroll setShowsVerticalScrollIndicator:NO];
+    [_actionScroll setScrollsToTop:NO];
+    [_actionScroll setAlwaysBounceVertical:NO];
+    [_actionScroll setDirectionalLockEnabled:YES];
+    [_actionScroll setBackgroundColor:[UIColor clearColor]];
+    [_page addSubview:_actionScroll];
+
     // Оценка: одна подложка на две кнопки, между ними тонкая черта.
     _votePill = [[YTPillView alloc] initWithFrame:CGRectZero];
     [_votePill setCornerRadius:18];
     [_votePill setFillColor:[YTTheme surface]];
-    [_page addSubview:_votePill];
+    [_actionScroll addSubview:_votePill];
 
-    _likeIcon = [self actionIcon:@"pl_like" into:_page];
+    _likeIcon = [self actionIcon:@"pl_like" into:_actionScroll];
 
     _likeCount = YTLabel(YTFontRegular(14), [YTTheme primaryText], 1);
-    [_page addSubview:_likeCount];
+    [_actionScroll addSubview:_likeCount];
 
     // `Width="0.75" Height="18"`, `#F1F1F1` при непрозрачности 0.47.
     _voteSeparator = [[UIView alloc] initWithFrame:CGRectZero];
     [_voteSeparator setBackgroundColor:[YTColor(0xF1F1F1) colorWithAlphaComponent:0.47]];
-    [_page addSubview:_voteSeparator];
+    [_actionScroll addSubview:_voteSeparator];
 
-    _dislikeIcon = [self actionIcon:@"pl_dislike" into:_page];
+    _dislikeIcon = [self actionIcon:@"pl_dislike" into:_actionScroll];
+
+    _dislikeCount = YTLabel(YTFontRegular(14), [YTTheme primaryText], 1);
+    [_actionScroll addSubview:_dislikeCount];
 
     {
         __weak YTPlayerViewController *weakSelf = self;
@@ -1833,45 +1877,64 @@ static const CGFloat YTPageMargin = 16;
         _likeTouch = [[YTTappableView alloc] initWithFrame:CGRectZero];
         [_likeTouch setHighlights:NO];
         [_likeTouch setOnTap:^{ [weakSelf rateTapped:@"like"]; }];
-        [_page addSubview:_likeTouch];
+        [_actionScroll addSubview:_likeTouch];
 
         _dislikeTouch = [[YTTappableView alloc] initWithFrame:CGRectZero];
         [_dislikeTouch setHighlights:NO];
         [_dislikeTouch setOnTap:^{ [weakSelf rateTapped:@"dislike"]; }];
-        [_page addSubview:_dislikeTouch];
+        [_actionScroll addSubview:_dislikeTouch];
 
         _shareTouch = [[YTTappableView alloc] initWithFrame:CGRectZero];
         [_shareTouch setHighlights:NO];
         [_shareTouch setOnTap:^{ [weakSelf shareTapped]; }];
-        [_page addSubview:_shareTouch];
+        [_actionScroll addSubview:_shareTouch];
+
+        _saveTouch = [[YTTappableView alloc] initWithFrame:CGRectZero];
+        [_saveTouch setHighlights:NO];
+        [_saveTouch setOnTap:^{ [weakSelf saveTapped]; }];
+        [_actionScroll addSubview:_saveTouch];
 
         _downloadTouch = [[YTTappableView alloc] initWithFrame:CGRectZero];
         [_downloadTouch setHighlights:NO];
         [_downloadTouch setOnTap:^{ [weakSelf downloadTapped]; }];
-        [_page addSubview:_downloadTouch];
+        [_actionScroll addSubview:_downloadTouch];
     }
 
     _sharePill = [[YTPillView alloc] initWithFrame:CGRectZero];
     [_sharePill setCornerRadius:18];
     [_sharePill setFillColor:[YTTheme surface]];
-    [_page addSubview:_sharePill];
+    [_actionScroll addSubview:_sharePill];
 
     // В оригинале у «Поделиться» значок `player/send.png`, а не share.png.
-    _shareIcon = [self actionIcon:@"pl_send" into:_page];
+    _shareIcon = [self actionIcon:@"pl_send" into:_actionScroll];
 
     _shareLabel = YTLabel(YTFontRegular(14), [YTTheme primaryText], 1);
     [_shareLabel setText:YTLoc(@"Поделиться")];
-    [_page addSubview:_shareLabel];
+    [_actionScroll addSubview:_shareLabel];
+
+    // «Сохранить»: `Assets/save.png`, подпись 14 с отступом 6 — как у соседей.
+    _savePill = [[YTPillView alloc] initWithFrame:CGRectZero];
+    [_savePill setCornerRadius:18];
+    [_savePill setFillColor:[YTTheme surface]];
+    [_actionScroll addSubview:_savePill];
+
+    _saveIcon = [self actionIcon:@"pl_save" into:_actionScroll];
+
+    _saveLabel = YTLabel(YTFontRegular(14), [YTTheme primaryText], 1);
+    [_saveLabel setText:YTLoc(@"Сохранить")];
+    [_actionScroll addSubview:_saveLabel];
+
+    [self applySaveButton];
 
     _downloadPill = [[YTPillView alloc] initWithFrame:CGRectZero];
     [_downloadPill setCornerRadius:18];
     [_downloadPill setFillColor:[YTTheme surface]];
-    [_page addSubview:_downloadPill];
+    [_actionScroll addSubview:_downloadPill];
 
-    _downloadIcon = [self actionIcon:@"pl_download" into:_page];
+    _downloadIcon = [self actionIcon:@"pl_download" into:_actionScroll];
 
     _downloadLabel = YTLabel(YTFontRegular(14), [YTTheme primaryText], 1);
-    [_page addSubview:_downloadLabel];
+    [_actionScroll addSubview:_downloadLabel];
 
     // Загрузка идёт своим ходом и сообщает о себе оповещением: полоса
     // процентов на кнопке двигается сама, без опроса.
@@ -2561,6 +2624,198 @@ static const CGFloat YTPageMargin = 16;
  * `UIAlertView` — не устаревшая небрежность: `UIAlertController`
  * появился в iOS 8, а нам нужна пятая.
  */
+#pragma mark Дизлайки и «Сохранить»
+
+/**
+ * Число дизлайков — отдельным запросом, после страницы.
+ *
+ * Ждать его перед показом незачем: оно стороннее и не главное, а сервис
+ * бывает и медленным. Пришло — дописываем; ролик за это время сменился —
+ * выбрасываем.
+ */
+- (void)loadDislikes {
+    [_dislikeCount setText:nil];
+
+    [[self view] setNeedsLayout];
+
+    if (![YTSettings showsDislikes]) {
+        return;
+    }
+
+    NSString *videoId = [_videoId copy];
+
+    __weak YTPlayerViewController *weakSelf = self;
+
+    YTAsync(^{
+        NSNumber *count = [YTDislikes countFor:videoId];
+
+        YTMain(^{
+            YTPlayerViewController *screen = weakSelf;
+
+            if (screen == nil || count == nil || ![videoId isEqualToString:screen->_videoId]) {
+                return;
+            }
+
+            [screen->_dislikeCount setText:YTCompactCount([count longLongValue])];
+
+            [[screen view] setNeedsLayout];
+        });
+    });
+}
+
+/** Кнопка «Сохранить»: видна ли и каким значком. */
+- (void)applySaveButton {
+    BOOL signedIn = [YTAuth isSignedIn];
+
+    [_savePill setHidden:!signedIn];
+    [_saveTouch setHidden:!signedIn];
+    [_saveIcon setHidden:!signedIn];
+    [_saveLabel setHidden:!signedIn];
+
+    [_saveIcon setImage:YTIcon(_savedSomewhere ? @"pl_save_on" : @"pl_save")];
+
+    /**
+     * Спрашиваем, собран ли вид: зовут нас и при самой сборке страницы,
+     * а `[self view]` из `loadView` заходит в него же снова.
+     */
+    if ([self isViewLoaded]) {
+        [[self view] setNeedsLayout];
+    }
+}
+
+/**
+ * «Сохранить» — порт `SaveBottomSheetPanel` из оригинала.
+ *
+ * Лист открывается сразу, со строкой «Загрузка…», и наполняется, когда
+ * придёт список: ждать сети до появления листа значило бы оставить
+ * нажатие без ответа на секунду и больше.
+ */
+- (void)saveTapped {
+    if (![YTAuth isSignedIn]) {
+        [self showNotice:YTLoc(@"Войдите в аккаунт")];
+
+        return;
+    }
+
+    if (_saveSheet == nil) {
+        _saveSheet = [[YTSettingsSheet alloc] initWithDark:NO];
+    }
+
+    NSString *videoId = [_videoId copy];
+
+    [_saveSheet setTitle:YTLoc(@"Выберите плейлист")
+                    rows:[NSArray arrayWithObject:[YTSheetRow note:YTLoc(@"Загрузка…")]]];
+    [_saveSheet openIn:[self view]];
+
+    __weak YTPlayerViewController *weakSelf = self;
+
+    YTAsync(^{
+        NSArray *states = [YTApi playlistSaveStates:videoId];
+
+        YTMain(^{
+            [weakSelf fillSaveSheet:states forVideo:videoId];
+        });
+    });
+}
+
+- (void)fillSaveSheet:(NSArray *)states forVideo:(NSString *)videoId {
+    // Лист закрыли или ролик сменился — список уже никому не нужен.
+    if (![videoId isEqualToString:_videoId] || ![_saveSheet isOpen]) {
+        return;
+    }
+
+    if (states == nil) {
+        [_saveSheet setTitle:YTLoc(@"Выберите плейлист")
+                        rows:[NSArray arrayWithObject:[YTSheetRow note:YTLoc(@"Не получилось")]]];
+
+        return;
+    }
+
+    _saveStates = states;
+
+    [self noteSavedIn:states];
+
+    if ([states count] == 0) {
+        [_saveSheet setTitle:YTLoc(@"Выберите плейлист")
+                        rows:[NSArray arrayWithObject:[YTSheetRow note:YTLoc(@"Нет данных")]]];
+
+        return;
+    }
+
+    __weak YTPlayerViewController *weakSelf = self;
+
+    NSMutableArray *rows = [NSMutableArray array];
+
+    for (NSMutableDictionary *state in states) {
+        [rows addObject:[YTSheetRow choice:[state objectForKey:@"title"]
+                                    picked:[[state objectForKey:@"contains"] boolValue]
+                                    action:^{ [weakSelf toggleSave:state]; }]];
+    }
+
+    [_saveSheet setTitle:YTLoc(@"Выберите плейлист") rows:rows];
+}
+
+/**
+ * Нажатие по плейлисту: кладёт ролик или убирает, лист закрывается,
+ * итог — короткой надписью. Так же и в оригинале.
+ */
+- (void)toggleSave:(NSMutableDictionary *)state {
+    [_saveSheet close];
+
+    BOOL save = ![[state objectForKey:@"contains"] boolValue];
+
+    NSString *videoId = [_videoId copy];
+    NSString *playlistId = [state objectForKey:@"playlistId"];
+    NSString *title = [state objectForKey:@"title"];
+
+    __weak YTPlayerViewController *weakSelf = self;
+
+    YTAsync(^{
+        BOOL done = [YTApi setVideo:videoId saved:save inPlaylist:playlistId];
+
+        YTMain(^{
+            YTPlayerViewController *screen = weakSelf;
+
+            if (screen == nil) {
+                return;
+            }
+
+            if (!done) {
+                [screen showNotice:YTLoc(@"Не получилось")];
+
+                return;
+            }
+
+            [state setObject:[NSNumber numberWithBool:save] forKey:@"contains"];
+
+            if ([videoId isEqualToString:screen->_videoId]) {
+                [screen noteSavedIn:screen->_saveStates];
+            }
+
+            [screen showNotice:(save
+                ? YTLocF(@"Видео добавлено в плейлист «%@»", title)
+                : YTLocF(@"Видео удалено из плейлиста «%@»", title))];
+        });
+    });
+}
+
+/** Лежит ли ролик хоть в одном плейлисте — по этому красится значок. */
+- (void)noteSavedIn:(NSArray *)states {
+    BOOL any = NO;
+
+    for (NSDictionary *state in states) {
+        if ([[state objectForKey:@"contains"] boolValue]) {
+            any = YES;
+
+            break;
+        }
+    }
+
+    _savedSomewhere = any;
+
+    [self applySaveButton];
+}
+
 /**
  * Короткая надпись поверх страницы — на две секунды.
  *
@@ -2572,6 +2827,13 @@ static const CGFloat YTPageMargin = 16;
         _notice = YTLabel(YTFontRegular(14), [UIColor whiteColor], 1);
 
         [_notice setTextAlignment:NSTextAlignmentCenter];
+
+        /**
+         * До двух строк: «Видео добавлено в плейлист «Смотреть позже»»
+         * в одну строку шириной с экран iPhone не влезает, и название
+         * плейлиста — самое нужное в надписи — уходило в многоточие.
+         */
+        [_notice setNumberOfLines:2];
         [_notice setBackgroundColor:[UIColor colorWithWhite:0 alpha:0.8]];
         [[_notice layer] setCornerRadius:14];
         [_notice setClipsToBounds:YES];
@@ -2583,10 +2845,14 @@ static const CGFloat YTPageMargin = 16;
     [_notice setText:text];
 
     CGRect box = [[self view] bounds];
-    CGFloat width = MIN(box.size.width - 48, (CGFloat)260);
+    CGFloat width = MIN(box.size.width - 48, (CGFloat)300);
 
+    CGFloat textHeight = YTTextHeight(text, [_notice font], width - 16, 2);
+    CGFloat height = MAX((CGFloat)28, ceil(textHeight) + 10);
+
+    // Низ надписи там же, где был у однострочной: растёт она вверх.
     [_notice setFrame:CGRectMake((box.size.width - width) / 2,
-                                 box.size.height - 120, width, 28)];
+                                 box.size.height - 92 - height, width, height)];
 
     [[self view] bringSubviewToFront:_notice];
 
@@ -3883,6 +4149,20 @@ static const CGFloat YTPageMargin = 16;
     [_fullscreenAuthor setText:channel];
     [_channelSubs setText:[details objectForKey:@"subscribers"]];
     [_likeCount setText:[details objectForKey:@"likes"]];
+
+    [self loadDislikes];
+
+    /**
+     * Отметку «сохранено» сбрасываем: узнать её можно только списком
+     * плейлистов, а спрашивать его ради значка на каждом ролике — лишний
+     * запрос. Лист, когда его откроют, покрасит значок сам.
+     */
+    _savedSomewhere = NO;
+
+    [self applySaveButton];
+
+    // Новый ролик — ряд с начала: с оценкой, а не с «Скачать».
+    [_actionScroll setContentOffset:CGPointZero animated:NO];
 
     _rateParams = [details copy];
 
@@ -8246,115 +8526,131 @@ static const CGFloat YTSplitLeftShare = 0.62;
     CGSize likeSize = [[_likeCount text] sizeWithFont:[_likeCount font]];
     CGFloat likeWidth = [[_likeCount text] length] > 0 ? ceil(likeSize.width) + 6 : 0;
 
-    CGFloat voteWidth = 16 + 20 + likeWidth + 8 + 0.75 + 8 + 20 + 16;
+    // Число дизлайков — тем же отступом 6, что счётчик у лайка.
+    CGSize dislikeSize = [[_dislikeCount text] sizeWithFont:[_dislikeCount font]];
+    CGFloat dislikeWidth = [[_dislikeCount text] length] > 0
+        ? ceil(dislikeSize.width) + 6 : 0;
+
+    CGFloat voteWidth = 16 + 20 + likeWidth + 8 + 0.75 + 8 + 20 + dislikeWidth + 16;
 
     // «Поделиться»: `Padding="16,8"`, значок 20, текст с отступом 6.
     CGSize shareSize = [[_shareLabel text] sizeWithFont:[_shareLabel font]];
     CGFloat shareWidth = 16 + 20 + 6 + ceil(shareSize.width) + 16;
 
+    // «Сохранить» — так же; у безымянного её нет вовсе.
+    BOOL saves = ![_savePill isHidden];
+
+    CGSize saveSize = [[_saveLabel text] sizeWithFont:[_saveLabel font]];
+    CGFloat saveWidth = saves ? 16 + 20 + 6 + ceil(saveSize.width) + 16 : 0;
+
     /**
      * «Скачать» — значок, а при загрузке ещё и проценты.
      *
-     * Слова у неё нет нарочно: ряд и без того еле помещается на iPhone 4,
-     * а значок стрелки вниз понятен без подписи. Проценты же появляются
-     * лишь тогда, когда есть что показывать.
+     * Слова у неё нет нарочно, как и в оригинале: стрелка вниз понятна
+     * без подписи. Проценты появляются лишь тогда, когда есть что
+     * показывать.
      */
     CGSize downSize = [[_downloadLabel text] sizeWithFont:[_downloadLabel font]];
     CGFloat downText = [[_downloadLabel text] length] > 0 ? ceil(downSize.width) + 6 : 0;
     CGFloat downWidth = 16 + 20 + downText + 16;
 
     /**
-     * Ряд не имеет права вылезти за поля.
+     * Ряд прокручивается вбок, как `VideoActionsScrollViewer` оригинала.
      *
-     * Уступают по очереди, и порядок здесь не случаен.
+     * Прежде ему запрещалось вылезать за поля, и кнопки уступали место
+     * по очереди: сперва слово «Поделиться», потом счётчик лайков.
+     * С «Сохранить» и числом дизлайков уступать пришлось бы уже всем,
+     * и на iPhone 4 счётчик лайков пропадал бы совсем. Оригинал решает
+     * это прокруткой — и мы так же: ничего не прячется и не ужимается,
+     * лишнее уезжает за край.
      *
-     * Сперва слово «Поделиться»: рядом с ним стоит стрелка, понятная
-     * и без подписи, — ровно как у кнопки скачивания, где слова нет
-     * с самого начала. Уступка это самая дешёвая и самая крупная,
-     * почти сотня точек.
-     *
-     * Потом уже счётчик лайков. Он несёт сведения, которых больше взять
-     * негде, поэтому его ужимаем последним и лишь настолько, насколько
-     * не хватило.
-     *
-     * Прежде уступал только счётчик, и этого перестало хватать, когда
-     * у кнопки скачивания появились проценты: на iPhone 4 счётчик
-     * обнулялся, а ряду всё равно недоставало полусотни точек — кнопка
-     * уезжала за край экрана.
+     * Поля 16 — внутри прокрутки: ряд начинается с отступа, а уезжает
+     * до самого края экрана.
      */
-    CGFloat available = width - YTPageMargin * 2;
+    [_actionScroll setFrame:CGRectMake(0, y, width, actionHeight)];
 
-    BOOL shareWord = YES;
+    CGFloat left = YTPageMargin;
 
-    if (voteWidth + 8 + shareWidth + 8 + downWidth > available) {
-        shareWord = NO;
-        shareWidth = 16 + 20 + 16;
-    }
+    [_votePill setFrame:CGRectMake(left, 0, voteWidth, actionHeight)];
 
-    CGFloat needed = voteWidth + 8 + shareWidth + 8 + downWidth;
+    CGFloat x = left + 16;
 
-    if (needed > available) {
-        CGFloat excess = needed - available;
-
-        likeWidth = MAX(0.0f, likeWidth - excess);
-        voteWidth = 16 + 20 + likeWidth + 8 + 0.75 + 8 + 20 + 16;
-    }
-
-    [_votePill setFrame:CGRectMake(YTPageMargin, y, voteWidth, actionHeight)];
-
-    CGFloat x = YTPageMargin + 16;
-
-    [_likeIcon setFrame:CGRectMake(x, y + 8, 20, 20)];
+    [_likeIcon setFrame:CGRectMake(x, 8, 20, 20)];
 
     // Накладка шире значка: пальцем в двадцать точек не попасть.
-    [_likeTouch setFrame:CGRectMake(YTPageMargin, y, 16 + 20 + likeWidth + 4,
-                                    actionHeight)];
+    [_likeTouch setFrame:CGRectMake(left, 0, 16 + 20 + likeWidth + 4, actionHeight)];
+
     x += 20;
 
     if (likeWidth > 0) {
-        [_likeCount setFrame:CGRectMake(x + 6, y + (actionHeight - likeSize.height) / 2,
+        [_likeCount setFrame:CGRectMake(x + 6, (actionHeight - likeSize.height) / 2,
                                         likeWidth - 6, ceil(likeSize.height))];
     }
 
     x += likeWidth + 8;
 
-    [_voteSeparator setFrame:CGRectMake(x, y + (actionHeight - 18) / 2, 0.75, 18)];
+    [_voteSeparator setFrame:CGRectMake(x, (actionHeight - 18) / 2, 0.75, 18)];
 
     x += 0.75 + 8;
 
-    [_dislikeIcon setFrame:CGRectMake(x, y + 8, 20, 20)];
+    [_dislikeIcon setFrame:CGRectMake(x, 8, 20, 20)];
 
-    [_dislikeTouch setFrame:CGRectMake(x - 8, y, 20 + 24, actionHeight)];
+    [_dislikeTouch setFrame:CGRectMake(x - 8, 0, 20 + dislikeWidth + 24, actionHeight)];
 
-    CGFloat shareLeft = YTPageMargin + voteWidth + 8;
-
-    [_sharePill setFrame:CGRectMake(shareLeft, y, shareWidth, actionHeight)];
-    [_shareTouch setFrame:CGRectMake(shareLeft, y, shareWidth, actionHeight)];
-    [_shareIcon setFrame:CGRectMake(shareLeft + 16, y + 8, 20, 20)];
-
-    if (shareWord) {
-        [_shareLabel setHidden:NO];
-        [_shareLabel setFrame:CGRectMake(shareLeft + 16 + 20 + 6,
-                                         y + (actionHeight - shareSize.height) / 2,
-                                         ceil(shareSize.width), ceil(shareSize.height))];
+    if (dislikeWidth > 0) {
+        [_dislikeCount setFrame:CGRectMake(x + 20 + 6,
+                                           (actionHeight - dislikeSize.height) / 2,
+                                           dislikeWidth - 6, ceil(dislikeSize.height))];
     } else {
-        // Прячем, а не сжимаем в ноль: обрезанное слово читалось бы мусором.
-        [_shareLabel setHidden:YES];
-        [_shareLabel setFrame:CGRectZero];
+        [_dislikeCount setFrame:CGRectZero];
     }
 
-    CGFloat downLeft = shareLeft + shareWidth + 8;
+    left += voteWidth + 8;
 
-    [_downloadPill setFrame:CGRectMake(downLeft, y, downWidth, actionHeight)];
-    [_downloadTouch setFrame:CGRectMake(downLeft, y, downWidth, actionHeight)];
-    [_downloadIcon setFrame:CGRectMake(downLeft + 16, y + 8, 20, 20)];
+    [_sharePill setFrame:CGRectMake(left, 0, shareWidth, actionHeight)];
+    [_shareTouch setFrame:CGRectMake(left, 0, shareWidth, actionHeight)];
+    [_shareIcon setFrame:CGRectMake(left + 16, 8, 20, 20)];
+
+    [_shareLabel setHidden:NO];
+    [_shareLabel setFrame:CGRectMake(left + 16 + 20 + 6,
+                                     (actionHeight - shareSize.height) / 2,
+                                     ceil(shareSize.width), ceil(shareSize.height))];
+
+    left += shareWidth + 8;
+
+    if (saves) {
+        [_savePill setFrame:CGRectMake(left, 0, saveWidth, actionHeight)];
+        [_saveTouch setFrame:CGRectMake(left, 0, saveWidth, actionHeight)];
+        [_saveIcon setFrame:CGRectMake(left + 16, 8, 20, 20)];
+
+        [_saveLabel setFrame:CGRectMake(left + 16 + 20 + 6,
+                                        (actionHeight - saveSize.height) / 2,
+                                        ceil(saveSize.width), ceil(saveSize.height))];
+
+        left += saveWidth + 8;
+    }
+
+    [_downloadPill setFrame:CGRectMake(left, 0, downWidth, actionHeight)];
+    [_downloadTouch setFrame:CGRectMake(left, 0, downWidth, actionHeight)];
+    [_downloadIcon setFrame:CGRectMake(left + 16, 8, 20, 20)];
 
     if (downText > 0) {
-        [_downloadLabel setFrame:CGRectMake(downLeft + 16 + 20 + 6,
-                                            y + (actionHeight - downSize.height) / 2,
+        [_downloadLabel setFrame:CGRectMake(left + 16 + 20 + 6,
+                                            (actionHeight - downSize.height) / 2,
                                             ceil(downSize.width), ceil(downSize.height))];
     } else {
         [_downloadLabel setFrame:CGRectZero];
+    }
+
+    left += downWidth + YTPageMargin;
+
+    [_actionScroll setContentSize:CGSizeMake(left, actionHeight)];
+
+    // Ряд сузился или экран повернули — прежний сдвиг мог уйти за край.
+    CGFloat most = MAX((CGFloat)0, left - width);
+
+    if ([_actionScroll contentOffset].x > most) {
+        [_actionScroll setContentOffset:CGPointMake(most, 0)];
     }
 
     y += actionHeight + 16;

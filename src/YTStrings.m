@@ -3,6 +3,62 @@
 #import "YTSettings.h"
 
 /**
+ * Знак дробной части — таблицей, а не у `NSNumberFormatter`.
+ *
+ * Цифры у нас латинские всегда, а форматтер у арабского отвечает своим
+ * `٫`, и выходило бы «4٫4». К латинским цифрам подходит точка.
+ */
+static NSString *YTDecimalSeparator(void) {
+    NSString *code = [YTStrings current];
+
+    NSArray *comma = [NSArray arrayWithObjects:
+        @"ru", @"uk", @"pl", @"de", @"fr", @"es", @"pt", @"it", nil];
+
+    return [comma containsObject:code] ? @"," : @".";
+}
+
+NSString *YTCompactCount(long long value) {
+    if (value < 1000) {
+        return [NSString stringWithFormat:@"%lld", MAX(0LL, value)];
+    }
+
+    long long unit;
+    NSString *pattern;
+
+    if (value < 1000000LL) {
+        unit = 1000LL;
+        pattern = @"%@ тыс.";
+    } else if (value < 1000000000LL) {
+        unit = 1000000LL;
+        pattern = @"%@ млн";
+    } else {
+        unit = 1000000000LL;
+        pattern = @"%@ млрд";
+    }
+
+    long long whole = value / unit;
+
+    NSString *number;
+
+    /**
+     * Счёт целочисленный нарочно: `4300 / 1000.0` в двоичной дроби равно
+     * 4,2999…, и после отбрасывания выходило бы «4,2».
+     */
+    if (whole < 10) {
+        long long tenths = value * 10 / unit;
+
+        number = (tenths % 10 == 0)
+            ? [NSString stringWithFormat:@"%lld", tenths / 10]
+            : [NSString stringWithFormat:@"%lld%@%lld",
+                  tenths / 10, YTDecimalSeparator(), tenths % 10];
+    } else {
+        number = [NSString stringWithFormat:@"%lld", whole];
+    }
+
+    return [YTLoc(pattern) stringByReplacingOccurrencesOfString:@"%@" withString:number];
+}
+
+/**
  * Языки, которые приложение знает. Порядок — тот, в каком они показаны
  * в настройках: сперва те, на которых говорят его пользователи, дальше
  * по распространённости.
