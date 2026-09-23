@@ -1102,6 +1102,10 @@ static uint32_t dnsParseAnswer(const uint8_t *buf, size_t len, uint16_t expectID
     uint8_t ihl = ip->version_ihl & 0x0f;
     if (ihl < 5) return;
     size_t ipHeaderLen = ihl * 4;
+    // Troubadour: длина — из заголовка IP. WireGuard вправе дополнить пакет
+    // нулями до кратного 16, и без обрезки они попали бы в поток как данные.
+    size_t ipTotal = ntohs(ip->total_length);
+    if (ipTotal >= ipHeaderLen && ipTotal < packetLen) packetLen = ipTotal;
     if (ip->protocol == AWGIPProtocolUDP) {
         [self handleUDPPacket:packetBytes length:packetLen ipHeaderLen:ipHeaderLen];
         return;

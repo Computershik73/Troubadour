@@ -46,6 +46,19 @@ static const NSTimeInterval YTTunnelWaitLimit = 45.0;
 static const NSTimeInterval YTTunnelIdleLimit = 20.0;
 static const NSUInteger YTTunnelIdlePerHost = 4;
 
+/**
+ * Срок на рукопожатие TLS и сколько раз открывать соединение заново.
+ *
+ * Через WARP часть соединений умирает сразу после открытия: сервер
+ * подтверждает наш первый пакет, а его ответ не приходит никогда — стек
+ * туннеля пишет «open 10s with nothing delivered (in 0 …)». Какие
+ * соединения так умрут, заранее не видно, а новое обычно проходит.
+ * Здоровое рукопожатие через туннель укладывается в полсекунды, поэтому
+ * ждём четыре и открываем другое — до трёх раз.
+ */
+static const NSTimeInterval YTTunnelHandshakeLimit = 4.0;
+static const NSUInteger YTTunnelFreshAttempts = 3;
+
 
 #pragma mark - Сокет
 
@@ -450,6 +463,9 @@ typedef enum {
     /** Соединение после ответа можно вернуть в запас. */
     BOOL _reusable;
 
+    /** Рукопожатие не дождалось сервера за YTTunnelHandshakeLimit. */
+    BOOL _stalled;
+
     // Разбор тела.
     BOOL _chunked;
     YTChunkState _chunkState;
@@ -722,21 +738,27 @@ typedef enum {
      * Повтор — только пока сервер не сказал ни байта.
      *
      * Соединение из запаса могло тихо умереть — тогда просто берём другое.
-     * Свежее рвётся в туннеле: стек туннеля бросает соединение, по которому
-     * десять секунд ничего не пришло, и рукопожатие TLS падает. Второе
-     * соединение в журнале обычно проходило. Истёкший предел не повторяем:
+     * Свежее умирает в туннеле (см. YTTunnelHandshakeLimit) — открываем
+     * новое, всего до трёх. Истёкший предел самого запроса не повторяем:
      * запрос и так прождал всё, что ему было отпущено.
      */
-    BOOL retried = NO;
+    NSUInteger fresh = 0;
 
     for (;;) {
+        _stalled = NO;
+
         NSError *error = [self attemptHost:host port:port secure:secure timeout:timeout];
 
         if (error == nil || _stopped) {
             return _stopped ? nil : error;
         }
 
-        BOOL again = !_heard && (_reused || (!retried && !_timedOut));
+        if (!_reused) {
+            fresh++;
+        }
+
+        BOOL again = !_heard &&
+            (_reused || (fresh < YTTunnelFreshAttempts && (!_timedOut || _stalled)));
 
         [self dropConnection];
 
@@ -745,12 +767,10 @@ typedef enum {
         }
 
         NSLog(@"[YouTube/Туннель] %@ %@: %@ — %@", [_request HTTPMethod], host,
-              [error localizedDescription],
-              _reused ? @"соединение из запаса устарело, открываю новое" : @"пробую ещё раз");
-
-        if (!_reused) {
-            retried = YES;
-        }
+              _stalled ? @"сервер молчит" : [error localizedDescription],
+              _reused ? @"соединение из запаса устарело, открываю новое"
+                      : [NSString stringWithFormat:@"открываю новое (%lu/%lu)",
+                         (unsigned long)fresh + 1, (unsigned long)YTTunnelFreshAttempts]);
 
         _timedOut = NO;
     }
@@ -856,7 +876,23 @@ typedef enum {
 
     // --- TLS до сервера, с проверкой сертификата до запроса.
     if (secure) {
-        return [self handshakeWithHost:host];
+        // Короткий срок — только на рукопожатие (см. YTTunnelHandshakeLimit).
+        NSTimeInterval limit = MIN(timeout, YTTunnelHandshakeLimit);
+
+        [self applyTimeout:limit];
+
+        NSTimeInterval began = [NSDate timeIntervalSinceReferenceDate];
+        NSError *failure = [self handshakeWithHost:host];
+
+        if (failure != nil) {
+            NSTimeInterval spent = [NSDate timeIntervalSinceReferenceDate] - began;
+
+            _stalled = !_stopped && spent >= limit - 0.5;
+
+            return failure;
+        }
+
+        [self applyTimeout:timeout];
     }
 
     return nil;
