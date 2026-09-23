@@ -215,6 +215,12 @@
     NSInteger _videoInitItag;
     NSInteger _audioInitItag;
 
+    /** Заголовки всех пришедших видеодорожек: itag → `moov`. */
+    NSMutableDictionary *_videoInits;
+
+    /** Дорожка каждого видеофрагмента: номер → itag. */
+    NSMutableDictionary *_videoItags;
+
     /** Номера кусков, перенятых у прежней подачи: байтов у нас нет. */
     NSMutableSet *_claimedVideo;
     NSMutableSet *_claimedAudio;
@@ -2203,6 +2209,8 @@ enum { YTLiveCushion = 120 };
                             _videoInit = head;
                             _videoInitItag = header.itag;
 
+                            [self keepVideoInit:head itag:header.itag];
+
                             [self noteDeliveredVideoItag:header.itag];
 
                             NSLog(@"[YouTube/Подача] Эфир: заголовок дорожки %ld "
@@ -2246,6 +2254,8 @@ enum { YTLiveCushion = 120 };
                      */
                     _videoInitItag = header.itag;
 
+                    [self keepVideoInit:body itag:header.itag];
+
                     [self noteDeliveredVideoItag:header.itag];
                 } else {
                     _audioInit = body;
@@ -2270,6 +2280,15 @@ enum { YTLiveCushion = 120 };
                 [(isVideo ? _videoSegments : _audioSegments)
                     setObject:body
                        forKey:[NSNumber numberWithInteger:header.sequence]];
+
+                if (isVideo && header.itag > 0) {
+                    if (_videoItags == nil) {
+                        _videoItags = [[NSMutableDictionary alloc] init];
+                    }
+
+                    [_videoItags setObject:[NSNumber numberWithInteger:header.itag]
+                                    forKey:[NSNumber numberWithInteger:header.sequence]];
+                }
             }
 
             /**
@@ -3715,6 +3734,32 @@ static NSMutableDictionary *YTLiveHeads = nil;
 - (NSData *)videoInit { return _videoInit; }
 
 - (NSInteger)videoInitItag { return _videoInitItag; }
+
+- (void)keepVideoInit:(NSData *)init itag:(NSInteger)itag {
+    if ([init length] == 0 || itag <= 0) {
+        return;
+    }
+
+    @synchronized (self) {
+        if (_videoInits == nil) {
+            _videoInits = [[NSMutableDictionary alloc] init];
+        }
+
+        [_videoInits setObject:init forKey:[NSNumber numberWithInteger:itag]];
+    }
+}
+
+- (NSData *)videoInitForItag:(NSInteger)itag {
+    @synchronized (self) {
+        return [_videoInits objectForKey:[NSNumber numberWithInteger:itag]];
+    }
+}
+
+- (NSInteger)videoSegmentItag:(NSInteger)sequence {
+    @synchronized (self) {
+        return [[_videoItags objectForKey:[NSNumber numberWithInteger:sequence]] integerValue];
+    }
+}
 - (NSData *)audioInit { return _audioInit; }
 
 - (NSData *)videoSegment:(NSInteger)sequence {

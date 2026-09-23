@@ -127,6 +127,20 @@
     NSArray *_sabrStarts;
     NSArray *_sabrSpans;
 
+    /**
+     * Какой дорожкой отдан плееру каждый кусок: номер куска → itag.
+     * И дорожка, которая сейчас на экране (0 — ещё не знаем).
+     *
+     * Под замком класса, не под `_lock`: пишется из сборки куска, а та
+     * держит замок подачи — взять там `_lock` значило бы рисковать
+     * встречной блокировкой.
+     */
+    NSMutableDictionary *_shownItags;
+    NSInteger _shownItag;
+
+    /** Разобранные заголовки дорожек: itag → YTTrackInit. */
+    NSMutableDictionary *_sabrInits;
+
     /** Полная длина склеенного потока, как её объявила раздача. */
     long long _relayTotal;
 
@@ -3084,6 +3098,36 @@
     // Дальше всё считается от найденного фрагмента, а не от нашей догадки.
     sequence = found;
 
+    /**
+     * Заголовок — того фрагмента, из которого собираем, а не последний
+     * пришедший.
+     *
+     * Сервер спускается на другую дорожку, пока плеер ещё не доиграл
+     * прежнюю, и её фрагменты, собранные с новым описанием кодека,
+     * рассыпались бы. Заодно запоминаем, какой дорожкой ушёл кусок, —
+     * по этому плеер узнает, когда дойдёт до смены (trackChangeAt:).
+     */
+    NSInteger fragmentItag = [sabr videoSegmentItag:found];
+
+    if (fragmentItag > 0 && fragmentItag != _sabrVideoInitItag) {
+        YTTrackInit *own = [self parsedInitForItag:fragmentItag sabr:sabr];
+
+        if (own != nil) {
+            videoInit = own;
+        }
+    }
+
+    if (fragmentItag > 0 && ![sabr liveMode]) {
+        @synchronized ([YTHlsProxy class]) {
+            if (_shownItags == nil) {
+                _shownItags = [[NSMutableDictionary alloc] init];
+            }
+
+            [_shownItags setObject:[NSNumber numberWithInteger:fragmentItag]
+                            forKey:[NSNumber numberWithInteger:index]];
+        }
+    }
+
     NSMutableArray *samples = [NSMutableArray array];
 
     if (![self collectData:video init:videoInit isVideo:YES into:samples]) {
@@ -3819,14 +3863,122 @@
 
 #pragma mark Прочее
 
-- (BOOL)takeTrackChange {
+/** Разобранный заголовок дорожки — один раз на дорожку. */
+- (YTTrackInit *)parsedInitForItag:(NSInteger)itag sabr:(YTSabr *)sabr {
+    NSNumber *key = [NSNumber numberWithInteger:itag];
+
+    @synchronized ([YTHlsProxy class]) {
+        YTTrackInit *known = [_sabrInits objectForKey:key];
+
+        if (known != nil) {
+            return known;
+        }
+    }
+
+    YTTrackInit *parsed = [YTMp4 parseInit:[sabr videoInitForItag:itag]];
+
+    if (parsed == nil || ![parsed isVideo]) {
+        return nil;
+    }
+
+    @synchronized ([YTHlsProxy class]) {
+        if (_sabrInits == nil) {
+            _sabrInits = [[NSMutableDictionary alloc] init];
+        }
+
+        [_sabrInits setObject:parsed forKey:key];
+    }
+
+    return parsed;
+}
+
+- (NSTimeInterval)trackChangeAt:(NSTimeInterval)now {
     YTSabr *sabr = nil;
+    NSArray *starts = nil;
+    NSTimeInterval step = 0;
 
     @synchronized (_lock) {
         sabr = _sabr;
+        starts = _sabrStarts;
+        step = _sabrStep;
     }
 
-    return sabr != nil ? [sabr takeVideoTrackChanged] : NO;
+    if (sabr == nil) {
+        return -1;
+    }
+
+    /**
+     * У эфира — как было: перезавод по приходу новой дорожки.
+     *
+     * Ось времени там своя, запас короткий, и новая дорожка доходит
+     * до показа за считанные секунды.
+     */
+    if ([sabr liveMode]) {
+        return [sabr takeVideoTrackChanged] ? now : -1;
+    }
+
+    // Сигнал о приходе у записи не нужен — снимаем, чтобы не копился.
+    [sabr takeVideoTrackChanged];
+
+    // Какой кусок сейчас на экране.
+    NSInteger index = -1;
+
+    if ([starts count] > 0) {
+        for (NSUInteger i = 0; i < [starts count]; i++) {
+            if ([[starts objectAtIndex:i] doubleValue] > now + 0.05) {
+                break;
+            }
+
+            index = (NSInteger)i;
+        }
+    } else if (step > 0) {
+        index = (NSInteger)floor(now / step);
+    }
+
+    if (index < 0) {
+        return -1;
+    }
+
+    NSInteger first = index;
+    NSInteger itag = 0;
+    NSInteger was = 0;
+
+    @synchronized ([YTHlsProxy class]) {
+        itag = [[_shownItags objectForKey:[NSNumber numberWithInteger:index]] integerValue];
+
+        if (itag == 0 || itag == _shownItag) {
+            return -1;
+        }
+
+        was = _shownItag;
+        _shownItag = itag;
+
+        // Первый кусок показа — дорожку просто запоминаем.
+        if (was == 0) {
+            return -1;
+        }
+
+        while (first > 0 &&
+               [[_shownItags objectForKey:[NSNumber numberWithInteger:first - 1]] integerValue] == itag) {
+            first--;
+        }
+    }
+
+    NSTimeInterval boundary = ([starts count] > (NSUInteger)first)
+        ? [[starts objectAtIndex:(NSUInteger)first] doubleValue]
+        : (NSTimeInterval)first * step;
+
+    /**
+     * Дошли своим ходом — граница только что позади, с неё и играем.
+     * Попали перемоткой в середину чужого участка — играем, где попали:
+     * отбросить к его началу значило бы отменить перемотку.
+     */
+    NSTimeInterval from = (now - boundary <= 2.0) ? boundary : now;
+
+    NSLog(@"[YouTube/Прокси] Показ дошёл до дорожки %ld (была %ld) на куске %ld — "
+          @"перезавод с %.1f с", (long)itag, (long)was, (long)first, from);
+
+    return from;
 }
 
 - (BOOL)stepDownVideo {
@@ -3916,6 +4068,12 @@
         // Карта принадлежит закрытому ролику — у следующего своя.
         _sabrStarts = nil;
         _sabrSpans = nil;
+
+        @synchronized ([YTHlsProxy class]) {
+            _shownItags = nil;
+            _shownItag = 0;
+            _sabrInits = nil;
+        }
 
         /**
          * Метка передачи двигается вместе со всем остальным.

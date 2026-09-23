@@ -113,6 +113,18 @@
  */
 - (NSInteger)videoInitItag;
 
+/**
+ * Заголовок данной дорожки; nil, если её заголовок не приходил.
+ *
+ * Хранятся все пришедшие, а не последний: когда сервер посреди ролика
+ * спускается на другую дорожку, фрагменты прежней ещё лежат в памяти
+ * и собираться должны со своим описанием кодека.
+ */
+- (NSData *)videoInitForItag:(NSInteger)itag;
+
+/** Какой дорожкой пришёл видеофрагмент; 0, если не известно. */
+- (NSInteger)videoSegmentItag:(NSInteger)sequence;
+
 /** Готовый фрагмент по его номеру; nil, если такого ещё нет. */
 - (NSData *)videoSegment:(NSInteger)sequence;
 - (NSData *)audioSegment:(NSInteger)sequence;

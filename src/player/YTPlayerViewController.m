@@ -5964,12 +5964,10 @@ static NSMutableArray *YTJamItems = nil;
  * ходить в сеть заново не нужно. Со стороны это выглядит как короткая
  * заминка вместо рассыпающейся картинки.
  */
-- (void)restartForTrackChange {
+- (void)restartForTrackChangeAt:(NSTimeInterval)resume {
     if (_player == nil || [_streamUrl length] == 0) {
         return;
     }
-
-    NSTimeInterval resume = [self currentSeconds];
 
     NSLog(@"[YouTube/Плеер] Дорожка сменилась — перезаводим декодер "
           @"с %.1f с", resume);
@@ -6000,11 +5998,18 @@ static NSMutableArray *YTJamItems = nil;
      * держит сам плеер, — а перезавод этот плеер разбирает вместе с его
      * наблюдателями. Снимать наблюдателя изнутри его же вызова нельзя.
      */
-    if ([[YTHlsProxy shared] takeTrackChange]) {
+    /**
+     * Пока идёт перемотка, время плеера ещё прежнее — спрашивать по нему
+     * о смене дорожки нельзя: ответ был бы про место, откуда уходим.
+     */
+    NSTimeInterval change = (_seeking || _awaitingSeek)
+        ? -1 : [[YTHlsProxy shared] trackChangeAt:[self currentSeconds]];
+
+    if (change >= 0) {
         __weak YTPlayerViewController *weak = self;
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            [weak restartForTrackChange];
+            [weak restartForTrackChangeAt:change];
         });
 
         return;
