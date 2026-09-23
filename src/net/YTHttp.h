@@ -1,4 +1,16 @@
 #import <Foundation/Foundation.h>
+#import <Security/Security.h>
+
+/**
+ * Проверка сертификата сервера — та же, что у каждого запроса YTHttp:
+ * сперва система, потом свои корни GTS (на старых iOS без них цепочку
+ * Google не собрать).
+ *
+ * Наружу — ради перехватчика обхода блокировок (YTTunnelProtocol): он
+ * держит TLS сам и проверяет сертификат этой же функцией, до отправки
+ * запроса.
+ */
+BOOL YTServerTrustIsValid(SecTrustRef trust, NSString *host);
 
 /**
  * Собирает запрос.

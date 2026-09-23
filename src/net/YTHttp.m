@@ -1,6 +1,7 @@
 #import "YTHttp.h"
 
 #import "YTStrings.h"
+#import "YTWarp.h"
 
 #import <Security/Security.h>
 
@@ -733,7 +734,12 @@ static BOOL YTTrustIsValid(SecTrustRef trust, NSString *host) {
     YTHttpCall *call = [[YTHttpCall alloc] init];
     [call setCaching:caching];
 
-    return [call run:request bodyLimit:bodyLimit onThread:[self thread]];
+    YTHttpResponse *response = [call run:request bodyLimit:bodyLimit onThread:[self thread]];
+
+    // Итог — обходу блокировок: по неудачам к YouTube он решает, предлагать ли себя.
+    [YTWarp noteResponse:response forRequest:request];
+
+    return response;
 }
 
 + (YTHttpResponse *)stream:(NSURLRequest *)request
@@ -745,7 +751,11 @@ static BOOL YTTrustIsValid(SecTrustRef trust, NSString *host) {
     [call setOnHeaders:onHeaders];
     [call setOnChunk:onChunk];
 
-    return [call run:request bodyLimit:0 onThread:[self thread]];
+    YTHttpResponse *response = [call run:request bodyLimit:0 onThread:[self thread]];
+
+    [YTWarp noteResponse:response forRequest:request];
+
+    return response;
 }
 
 + (YTHttpResponse *)send:(NSURLRequest *)request
@@ -882,3 +892,8 @@ static BOOL YTTrustIsValid(SecTrustRef trust, NSString *host) {
 }
 
 @end
+
+
+BOOL YTServerTrustIsValid(SecTrustRef trust, NSString *host) {
+    return YTTrustIsValid(trust, host);
+}

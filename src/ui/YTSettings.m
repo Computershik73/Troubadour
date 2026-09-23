@@ -26,6 +26,8 @@ static NSString *const YTInterfaceLanguageKey = @"YTInterfaceLanguage";
 static NSString *const YTSixtyFramesKey = @"YTSixtyFrames";
 static NSString *const YTHideShortsKey = @"YTHideShorts";
 static NSString *const YTDislikesKey = @"YTDislikes";
+static NSString *const YTWarpKey = @"YTWarp";
+static NSString *const YTWarpDeclinedKey = @"YTWarpOfferDeclined";
 
 /**
  * Ключ, которого нет в хранилище, и ключ со значением 0 в NSUserDefaults
@@ -569,6 +571,24 @@ static void YTNotifyChanged(void) {
     YTSetFlag(YTDislikesKey, shows);
 
     YTNotifyChanged();
+}
+
++ (BOOL)usesWarp {
+    return YTFlag(YTWarpKey, NO);
+}
+
++ (void)setUsesWarp:(BOOL)uses {
+    YTSetFlag(YTWarpKey, uses);
+
+    YTNotifyChanged();
+}
+
++ (BOOL)warpOfferDeclined {
+    return YTFlag(YTWarpDeclinedKey, NO);
+}
+
++ (void)setWarpOfferDeclined:(BOOL)declined {
+    YTSetFlag(YTWarpDeclinedKey, declined);
 }
 
 + (BOOL)prefersThirtyByDevice {

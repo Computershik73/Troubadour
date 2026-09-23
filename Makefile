@@ -23,6 +23,11 @@ include $(THEOS)/makefiles/common.mk
 APPLICATION_NAME = Troubadour
 
 Troubadour_FILES = $(shell find src -name '*.m')
+
+# Шифры туннеля обхода блокировок написаны на чистом C (Monocypher,
+# BLAKE2s, ChaCha20 на NEON). Берём их только из src/warp: в src/helper
+# лежит отдельная программа со своей main, ей в приложение нельзя.
+Troubadour_FILES += $(shell find src/warp -name '*.c')
 Troubadour_CFLAGS  = -fobjc-arc -Wall -Wno-deprecated-declarations
 Troubadour_CFLAGS += $(addprefix -I,$(shell find src -type d))
 

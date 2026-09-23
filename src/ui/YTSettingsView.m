@@ -10,6 +10,7 @@
 #import "YTMetrics.h"
 #import "YTAppIconView.h"
 #import "YTSettings.h"
+#import "YTWarp.h"
 #import "YTStreams.h"
 #import "YTSkin.h"
 #import "YTSkinView.h"
@@ -752,6 +753,11 @@ static const CGFloat YTSheetOption = 42;
     YTSettingsRow *_autoplayShorts;
     YTSettingsRow *_hideShorts;
     YTSettingsRow *_dislikes;
+
+    /** Обход блокировок: переключатель, состояние и автор кода. */
+    YTSettingsRow *_warp;
+    YTSettingsRow *_warpState;
+    YTSettingsRow *_warpAuthor;
     YTSettingsRow *_about;
 }
 
@@ -1040,6 +1046,42 @@ static const CGFloat YTSheetOption = 42;
                                  @"сам YouTube его больше не показывает")];
     [_dislikes useToggle];
 
+    /**
+     * Обход блокировок.
+     *
+     * Код туннеля — Dante-WARP. Автор отдал его с одним условием: его имя
+     * должно стоять там, где обход включается. Оно и стоит — последней
+     * строкой раздела, со ссылкой на профиль.
+     */
+    [self sectionTitled:YTLoc(@"Обход блокировок")];
+
+    _warp = [self rowWithIcon:@"languages"
+                        label:YTLoc(@"Обход блокировок YouTube")
+                       action:^{
+        [YTWarp setEnabled:![YTWarp isEnabled]];
+        [weakSelf refresh];
+    }];
+
+    [_warp setHintText:YTLoc(@"Через Cloudflare WARP — если YouTube в вашей сети "
+                             @"заблокирован. Через туннель идут только запросы "
+                             @"к YouTube")];
+    [_warp useToggle];
+
+    // Нажатие по состоянию — попробовать ещё раз, не дожидаясь сторожа.
+    _warpState = [self rowWithIcon:@"info" label:YTLoc(@"Состояние") action:^{
+        [YTWarp retry];
+    }];
+
+    _warpAuthor = [self rowWithIcon:@"link"
+                              label:YTLocF(@"Автор: %@", @"qwertyu1opz")
+                             action:^{
+        [[UIApplication sharedApplication]
+            openURL:[NSURL URLWithString:@"https://github.com/qwertyu1opz"]];
+    }];
+
+    [_warpAuthor setHintText:YTLocF(@"Код обхода — Dante-WARP, %@",
+                                    @"github.com/qwertyu1opz")];
+
     /** О программе. */
     [self sectionTitled:YTLoc(@"О программе")];
 
@@ -1124,6 +1166,10 @@ static const CGFloat YTSheetOption = 42;
 - (void)refreshLive {
     [_webLogin setValueText:[YTWebAuth isSignedIn] ? YTLoc(@"Выполнен") : YTLoc(@"Нет")];
     [_poToken setValueText:[[YTPoToken shared] isReady] ? YTLoc(@"Готов") : YTLoc(@"Нет")];
+
+    // Обход подключается десятки секунд — показываем, как идёт дело.
+    [_warpState setValueText:[YTWarp statusText]];
+    [_warp setToggleOn:[YTWarp isEnabled]];
 }
 
 - (void)refresh {
@@ -1195,6 +1241,7 @@ static const CGFloat YTSheetOption = 42;
     [_autoplayShorts setToggleOn:[YTSettings autoplayNextShort]];
     [_hideShorts setToggleOn:[YTSettings hidesShorts]];
     [_dislikes setToggleOn:[YTSettings showsDislikes]];
+    [_warp setToggleOn:[YTWarp isEnabled]];
 
     /**
      * Спрятали Shorts — прячем и настройку их автолистания: она

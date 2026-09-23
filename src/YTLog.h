@@ -1,3 +1,10 @@
+/*
+ * Только для Objective-C: этот заголовок подмешивается ключом -include
+ * в каждый файл сборки, а среди них есть и чистый C (шифры туннеля
+ * в src/warp). Foundation там не собирается, а NSLog и не нужен.
+ */
+#ifdef __OBJC__
+
 #import <Foundation/Foundation.h>
 
 /**
@@ -67,3 +74,5 @@ void YTLogClear(void);
 #endif
 
 #endif
+
+#endif /* __OBJC__ */

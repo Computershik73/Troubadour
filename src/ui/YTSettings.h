@@ -262,6 +262,20 @@ typedef enum {
 + (void)setShowsDislikes:(BOOL)shows;
 
 /**
+ * Обход блокировок YouTube через Cloudflare WARP (см. src/warp/YTWarp.h).
+ *
+ * Выключен, пока человек не включит сам — из настроек или согласившись
+ * на предложение, которое приложение делает, когда YouTube в его сети
+ * недоступен.
+ */
++ (BOOL)usesWarp;
++ (void)setUsesWarp:(BOOL)uses;
+
+/** Человек попросил больше не предлагать обход. */
++ (BOOL)warpOfferDeclined;
++ (void)setWarpOfferDeclined:(BOOL)declined;
+
+/**
  * Брать ли шестидесятикадровые дорожки.
  *
  * По умолчанию на A4 и A5 — нет: эти чипы не успевают разбирать столько
