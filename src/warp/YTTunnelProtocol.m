@@ -1312,7 +1312,15 @@ static NSString *YTTunnelCanonicalName(NSString *name) {
     NSString *transfer = [[headers objectForKey:@"Transfer-Encoding"] lowercaseString];
     NSString *encoding = [[headers objectForKey:@"Content-Encoding"] lowercaseString];
 
-    _chunked = ([transfer rangeOfString:@"chunked"].location != NSNotFound);
+    /**
+     * Проверки на nil — не для порядка.
+     *
+     * Сообщение nil возвращает нулевой NSRange, то есть location 0, а не
+     * NSNotFound. Без проверки любой ответ без Transfer-Encoding — картинки,
+     * скрипт плеера — считался кусочным, и его тело разбиралось как размеры
+     * кусков: «Куски не разобрались», пустые превью, нет видео.
+     */
+    _chunked = transfer != nil && [transfer rangeOfString:@"chunked"].location != NSNotFound;
     _gzip = [encoding isEqualToString:@"gzip"] || [encoding isEqualToString:@"x-gzip"];
 
     long long length = -1;
@@ -1330,8 +1338,8 @@ static NSString *YTTunnelCanonicalName(NSString *name) {
     NSString *connection = [[headers objectForKey:@"Connection"] lowercaseString];
 
     BOOL keepAlive = [version isEqualToString:@"HTTP/1.1"]
-        ? [connection rangeOfString:@"close"].location == NSNotFound
-        : [connection rangeOfString:@"keep-alive"].location != NSNotFound;
+        ? (connection == nil || [connection rangeOfString:@"close"].location == NSNotFound)
+        : (connection != nil && [connection rangeOfString:@"keep-alive"].location != NSNotFound);
 
     // То, что разобрали сами, клиенту уже не указ.
     [headers removeObjectForKey:@"Transfer-Encoding"];

@@ -171,10 +171,16 @@ int awg_grow_sockbuf(int fd, int opt, int want)
             // пакет — меньше пакетов на тот же объём: на iPad 3 замеры дали
             // 8.3 -> 9.5 МБ/с и на 5% меньше процессорного времени.
             // Команда MTU <n> переопределяет для опытов, 0 возвращает как было.
+            //
+            // Troubadour: по умолчанию 1280, как отдаёт WARP. С 1400 мы
+            // объявляем серверу MSS 1360, его полноразмерные сегменты в туннель
+            // WARP не влезают и пропадают молча — на iPad 2 под ТСПУ так
+            // терялся первый же ответ TLS с сертификатами: соединения по десять
+            // секунд стояли без единого байта, превью и скрипт плеера не шли.
             NSInteger mtuOverride = [[NSUserDefaults standardUserDefaults] integerForKey:@"dante_mtu"];
             self->_ipStack.tunnelMTU = (mtuOverride >= 576 && mtuOverride <= 1500)
                                         ? (NSUInteger)mtuOverride
-                                        : 1400;
+                                        : 1280;
             DLog(@"[AWG] tunnel DNS server: %@, MTU %lu", self->_ipStack.dnsServerIPv4,
                  (unsigned long)self->_ipStack.tunnelMTU);
             ok = [self startSOCKS5ProxyWithError:&err];
