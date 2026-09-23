@@ -38,6 +38,8 @@ static const NSTimeInterval kDanteConnectTimeout = 20.0;
     NSUInteger _generation, _activeGeneration;
     BOOL _restrictedNetwork;
     dispatch_queue_t _queue;
+    // Troubadour: свежая личность, которая не подключилась (см. tryFreshRegistration).
+    AWGConfig *_failedIdentity;
 }
 
 + (instancetype)sharedFixer {
@@ -208,18 +210,34 @@ static BOOL DanteIsOwnIdentity(AWGConfig *c) {
         DCon(@"warp: identity %@ -> %@", c.ipv4Address, c.peerEndpoint);
         [mgr selectConfigAtIndex:(NSUInteger)i];
         if (maskSNI) mgr.currentConfig.preferredSNI = maskSNI;
+        if ([self connectAndVerify:mgr]) return YES;
+        if (self.cancelled) return NO;
+
+        // Troubadour: личность цела, а её точка входа в этой сети молчит
+        // (сменилась сеть или адрес из ответа Cloudflare сюда не доходит).
+        // Прежде чем регистрировать новую, пробуем её же через точку
+        // несущего — ту, что отвечает чаще всех.
+        NSString *proven = [self bootstrapConfig].peerEndpoint;
+        if (proven.length == 0 || [proven isEqualToString:mgr.currentConfig.peerEndpoint]) return NO;
+        [self log:[NSString stringWithFormat:@"  пробую свою личность через %@", proven]];
+        DCon(@"warp: identity %@ -> %@", c.ipv4Address, proven);
+        [mgr setEndpointForCurrentConfig:proven];
         return [self connectAndVerify:mgr];
     }
     return NO;
 }
 
-- (BOOL)tryFreshRegistration:(AmneziaWGManager *)mgr maskSNI:(NSString *)maskSNI {
+- (BOOL)tryFreshRegistration:(AmneziaWGManager *)mgr maskSNI:(NSString *)maskSNI
+                     through:(AWGConfig *)carrier {
     [self notify:@"Регистрирую WARP…"];
     [self log:@"Кандидат: свежая регистрация WARP (api.cloudflareclient.com)"];
     DCon(@"warp: register api.cloudflareclient.com");
     __block BOOL ok = NO;
     __block NSString *err = nil;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    // Troubadour: новая личность — через точку несущего, до которой
+    // рукопожатие только что дошло (см. provenEndpoint).
+    mgr.provenEndpoint = carrier.peerEndpoint;
     [mgr generateWarpConfigWithCompletion:^(BOOL success, NSString *errorMsg) {
         ok = success;
         err = errorMsg;
@@ -228,14 +246,24 @@ static BOOL DanteIsOwnIdentity(AWGConfig *c) {
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW,
                                                (int64_t)(60.0 * NSEC_PER_SEC)));
     dispatch_release(sem);
+    mgr.provenEndpoint = nil;
+    AWGConfig *fresh = DanteIsOwnIdentity(mgr.currentConfig) ? mgr.currentConfig : nil;
+    if (fresh && ok) {
+        if (maskSNI) fresh.preferredSNI = maskSNI;
+        if ([self connectAndVerify:mgr]) fresh = nil;   // удалась — не трогаем
+        else ok = NO;
+    }
     if (!ok || !DanteIsOwnIdentity(mgr.currentConfig)) {
         [self log:[NSString stringWithFormat:@"Регистрация не удалась: %@",
                    err ?: (ok ? @"выдан только общий резерв" : @"таймаут")]];
         DCon(@"warp: register failed");
+        // Troubadour: личность, которая не подключилась даже через проверенную
+        // точку, не храним — иначе при следующем запуске на неё уйдут первые
+        // десять секунд, а потом всё равно регистрация заново. Удаляет её
+        // registerThroughCarriers: активный конфиг менеджер удалять не даёт.
+        _failedIdentity = fresh;
         return NO;
     }
-    if (maskSNI) mgr.currentConfig.preferredSNI = maskSNI;
-    if (![self connectAndVerify:mgr]) return NO;
     // Прежние свои личности больше не нужны: оставшись в списке, они снова
     // стали бы кандидатами и делили бы ключ с тем, у кого были взяты.
     [mgr removeConfigsPassingTest:^BOOL(AWGConfig *c) { return DanteIsOwnIdentity(c); }];
@@ -256,13 +284,17 @@ static const NSUInteger kDanteRegistrationCarriers = 5;
 
     AWGConfig *lastWorking = nil;
     NSUInteger tried = 0;
+    _failedIdentity = nil;
     for (AWGConfig *carrier in carriers) {
         if (self.cancelled || tried >= kDanteRegistrationCarriers) break;
         if (maskSNI) carrier.preferredSNI = maskSNI;
+        // Troubadour: номер — попытки, а не удавшегося несущего; иначе
+        // в состоянии висело «WARP 2/5», пока перебирались мёртвые сиды.
+        tried++;
         [self notify:[NSString stringWithFormat:@"WARP %lu/%lu…",
-                      (unsigned long)tried + 1, (unsigned long)kDanteRegistrationCarriers]];
+                      (unsigned long)tried, (unsigned long)kDanteRegistrationCarriers]];
         [self log:[NSString stringWithFormat:@"Несущий: %@ (%@)", carrier.label, carrier.peerEndpoint]];
-        DCon(@"warp: carrier %lu/%lu -> %@", (unsigned long)tried + 1,
+        DCon(@"warp: carrier %lu/%lu -> %@", (unsigned long)tried,
              (unsigned long)kDanteRegistrationCarriers, carrier.peerEndpoint);
         if (![mgr.savedConfigs containsObject:carrier]) [mgr addConfig:carrier];
         [mgr selectConfigAtIndex:[mgr.savedConfigs indexOfObject:carrier]];
@@ -271,15 +303,19 @@ static const NSUInteger kDanteRegistrationCarriers = 5;
         BOOL up = [self connectAndVerify:mgr];
         self.holdFixed = NO;
         if (!up) continue;
-        tried++;
         lastWorking = carrier;
-        if ([self tryFreshRegistration:mgr maskSNI:maskSNI]) {
+        if ([self tryFreshRegistration:mgr maskSNI:maskSNI through:carrier]) {
             // Общие ключи больше не нужны — не копим их в настройках.
             [mgr removeConfigsPassingTest:^BOOL(AWGConfig *c) {
                 return [c.label hasPrefix:@"WARP seed"] || [c.label hasPrefix:@"WARP bootstrap"];
             }];
             return;
         }
+        // Troubadour: несущий работает, не вышла только личность. Другие
+        // несущие тут не помогут — сиды из списка в журнале отвечали на
+        // рукопожатие, но не пропускали данных, и перебор съедал по восемь
+        // секунд на каждый. Остаёмся на этом.
+        break;
     }
     if (self.cancelled || !lastWorking) return;
 
@@ -287,6 +323,11 @@ static const NSUInteger kDanteRegistrationCarriers = 5;
     [self log:@"Своя личность не получилась — остаюсь на общем ключе (под нагрузкой возможны обрывы)"];
     DCon(@"warp: fallback to shared key");
     [mgr selectConfigAtIndex:[mgr.savedConfigs indexOfObject:lastWorking]];
+    AWGConfig *failed = _failedIdentity;
+    _failedIdentity = nil;
+    if (failed) {
+        [mgr removeConfigsPassingTest:^BOOL(AWGConfig *c) { return c == failed; }];
+    }
     if (![self connectAndVerify:mgr]) {
         [self log:@"  и общий ключ больше не отвечает"];
     }

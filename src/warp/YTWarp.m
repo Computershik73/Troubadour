@@ -36,6 +36,9 @@ static const NSTimeInterval YTWarpOfferWindow = 90.0;
 static volatile int32_t YTWarpActiveFlag = 0;
 static volatile int32_t YTWarpPortValue = 0;
 
+/** Обход включён и подключается: перехватчик придерживает запросы. */
+static volatile int32_t YTWarpConnectingFlag = 0;
+
 /** Предлагать больше не нужно: предложили, включили или отказались. */
 static volatile int32_t YTWarpOfferSettled = 0;
 
@@ -218,6 +221,10 @@ static volatile int32_t YTWarpOfferSettled = 0;
     return (uint16_t)YTWarpPortValue;
 }
 
++ (BOOL)isConnecting {
+    return YTWarpConnectingFlag != 0;
+}
+
 - (void)somethingChanged {
     if (![NSThread isMainThread]) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self somethingChanged]; });
@@ -239,9 +246,19 @@ static volatile int32_t YTWarpOfferSettled = 0;
             : @"Туннеля нет — запросы идут напрямую");
     }
 
+    /**
+     * Подключение идёт — запросы к YouTube ждут туннель.
+     *
+     * Напрямую они в этой сети всё равно не пройдут: каждый висел свои
+     * двадцать пять секунд и падал, а туннель тем временем уже поднимался.
+     */
+    BOOL connecting = !active && [YTSettings usesWarp] &&
+                      fixer.state == DanteFixerStateRunning;
+
     YTWarpPortValue = port;
     OSMemoryBarrier();
     YTWarpActiveFlag = active ? 1 : 0;
+    YTWarpConnectingFlag = connecting ? 1 : 0;
     OSMemoryBarrier();
 
     if (fixer.state != _lastState) {

@@ -43,6 +43,15 @@ extern NSString *const YTWarpChangedNotification;
 /** Порт локального SOCKS5 туннеля; 0, пока туннеля нет. */
 + (uint16_t)socksPort;
 
+/**
+ * Обход включён и сейчас подключается.
+ *
+ * Перехватчик тогда берёт запросы к YouTube себе и ждёт туннель, а не
+ * отпускает их напрямую — в сети с блокировкой они там только простоят
+ * до предела ожидания.
+ */
++ (BOOL)isConnecting;
+
 /** Идти ли этому хосту через туннель — хосты YouTube и Google. */
 + (BOOL)shouldRouteHost:(NSString *)host;
 

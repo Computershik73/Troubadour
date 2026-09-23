@@ -61,6 +61,13 @@ extern NSString * const kAmneziaWGStatusDidChangeNotification;
 // selects it. Completion runs on the main thread.
 - (void)generateWarpConfigWithCompletion:(void(^)(BOOL success, NSString *errorMsg))completion;
 
+// Troubadour: точка входа WARP, до которой в этой сети уже дошло рукопожатие
+// (несущий, через который идёт регистрация). Если задана, новая личность
+// подключается через неё, а не через адрес из ответа Cloudflare: тот бывает
+// вне известных диапазонов WARP (104.16.x) и в сетях с ТСПУ не отвечает.
+// Любая точка WARP принимает любой зарегистрированный ключ.
+@property (atomic, copy) NSString *provenEndpoint;
+
 // Install the WARP identity shipped with the app and connect. No network needed
 // to set it up, so it works where registration is blocked outright.
 - (void)useBundledSeedWithCompletion:(void(^)(BOOL success, NSString *errorMsg))completion;

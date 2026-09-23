@@ -29,6 +29,23 @@ static NSString *const YTTunnelErrorDomain = @"NSURLErrorDomain";
 /** Предел заголовков ответа: дальше это уже не HTTP, а мусор. */
 static const NSUInteger YTTunnelHeadLimit = 64 * 1024;
 
+/**
+ * Сколько запрос ждёт туннель, пока обход подключается.
+ *
+ * Подключение с регистрацией своей личности занимает до полуминуты с
+ * небольшим; дольше держать запрос нет смысла — значит, что-то не так.
+ */
+static const NSTimeInterval YTTunnelWaitLimit = 45.0;
+
+/**
+ * Сколько держим открытое соединение без дела и сколько их на один узел.
+ *
+ * Google закрывает простаивающее соединение сам через минуту-другую;
+ * двадцать секунд — с запасом, чтобы не наткнуться на уже закрытое.
+ */
+static const NSTimeInterval YTTunnelIdleLimit = 20.0;
+static const NSUInteger YTTunnelIdlePerHost = 4;
+
 
 #pragma mark - Сокет
 
@@ -202,6 +219,189 @@ static OSStatus YTTunnelSSLWrite(SSLConnectionRef connection, const void *data, 
 }
 
 
+#pragma mark - Запас соединений
+
+/**
+ * Соединение, оставшееся открытым после ответа.
+ *
+ * Новое соединение через туннель — это TCP внутри WireGuard и рукопожатие
+ * TLS поверх него: три-четыре круга до сервера, а на плохой связи, с
+ * повторами пакетов, — секунды. Превью главной — десятки запросов к одному
+ * i.ytimg.com, и без запаса каждый платил эту цену заново.
+ */
+@interface YTTunnelLink : NSObject {
+@public
+    int fd;
+    SSLContextRef ssl;
+
+    /** Порт SOCKS туннеля: туннель переподключился — соединение уже чужое. */
+    uint16_t socks;
+
+    NSTimeInterval idleSince;
+}
+- (void)drop;
+@end
+
+@implementation YTTunnelLink
+
+- (id)init {
+    self = [super init];
+
+    if (self != nil) {
+        fd = -1;
+    }
+
+    return self;
+}
+
+- (void)drop {
+    if (ssl != NULL) {
+        SSLClose(ssl);
+        CFRelease(ssl);
+        ssl = NULL;
+    }
+
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
+    }
+}
+
+- (void)dealloc {
+    [self drop];
+}
+
+@end
+
+/** Ключ запаса → NSMutableArray соединений, свежие в конце. */
+static NSMutableDictionary *YTTunnelIdle = nil;
+
+/**
+ * Соединение ещё годно: сервер его не закрыл и ничего не прислал без спроса.
+ *
+ * Подглядываем в сокет, не ожидая: закрытое отдаёт 0, живое и молчащее —
+ * EAGAIN. Всё остальное — непонятное состояние, лучше открыть новое.
+ */
+static BOOL YTTunnelLinkAlive(YTTunnelLink *link) {
+    if (link->ssl != NULL) {
+        size_t buffered = 0;
+
+        if (SSLGetBufferedReadSize(link->ssl, &buffered) == noErr && buffered > 0) {
+            return NO;
+        }
+    }
+
+    uint8_t probe;
+    ssize_t n = recv(link->fd, &probe, 1, MSG_PEEK | MSG_DONTWAIT);
+
+    return n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK);
+}
+
+static YTTunnelLink *YTTunnelTakeLink(NSString *key, uint16_t socks) {
+    NSMutableArray *dead = [NSMutableArray array];
+    YTTunnelLink *found = nil;
+
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+
+    @synchronized ([YTTunnelLink class]) {
+        NSMutableArray *list = [YTTunnelIdle objectForKey:key];
+
+        while ([list count] > 0) {
+            YTTunnelLink *link = [list lastObject];
+
+            [list removeLastObject];
+
+            if (link->socks == socks && now - link->idleSince < YTTunnelIdleLimit &&
+                YTTunnelLinkAlive(link)) {
+                found = link;
+                break;
+            }
+
+            [dead addObject:link];
+        }
+    }
+
+    // Закрываем вне замка: SSLClose пишет в сокет.
+    for (YTTunnelLink *link in dead) {
+        [link drop];
+    }
+
+    return found;
+}
+
+static void YTTunnelKeepLink(NSString *key, YTTunnelLink *link) {
+    NSMutableArray *dead = [NSMutableArray array];
+
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+
+    link->idleSince = now;
+
+    @synchronized ([YTTunnelLink class]) {
+        if (YTTunnelIdle == nil) {
+            YTTunnelIdle = [[NSMutableDictionary alloc] init];
+        }
+
+        // Заодно выметаем залежавшиеся и оставшиеся от прежнего туннеля.
+        for (NSString *other in [YTTunnelIdle allKeys]) {
+            NSMutableArray *list = [YTTunnelIdle objectForKey:other];
+
+            for (NSInteger i = (NSInteger)[list count] - 1; i >= 0; i--) {
+                YTTunnelLink *old = [list objectAtIndex:(NSUInteger)i];
+
+                if (old->socks != link->socks || now - old->idleSince >= YTTunnelIdleLimit) {
+                    [dead addObject:old];
+                    [list removeObjectAtIndex:(NSUInteger)i];
+                }
+            }
+
+            if ([list count] == 0) {
+                [YTTunnelIdle removeObjectForKey:other];
+            }
+        }
+
+        NSMutableArray *list = [YTTunnelIdle objectForKey:key];
+
+        if (list == nil) {
+            list = [NSMutableArray array];
+            [YTTunnelIdle setObject:list forKey:key];
+        }
+
+        [list addObject:link];
+
+        while ([list count] > YTTunnelIdlePerHost) {
+            [dead addObject:[list objectAtIndex:0]];
+            [list removeObjectAtIndex:0];
+        }
+    }
+
+    for (YTTunnelLink *old in dead) {
+        [old drop];
+    }
+}
+
+/** Начало непонятного ответа — в журнал: по нему видно, что пришло. */
+static NSString *YTTunnelPreview(NSData *data) {
+    NSUInteger length = MIN([data length], (NSUInteger)48);
+    const uint8_t *bytes = [data bytes];
+
+    NSMutableString *text = [NSMutableString string];
+    NSMutableString *hex = [NSMutableString string];
+
+    for (NSUInteger i = 0; i < length; i++) {
+        uint8_t c = bytes[i];
+
+        [text appendFormat:@"%c", (c >= 0x20 && c < 0x7F) ? c : '.'];
+
+        if (i < 12) {
+            [hex appendFormat:@"%02x ", c];
+        }
+    }
+
+    return [NSString stringWithFormat:@"%lu байт, %@| %@",
+            (unsigned long)[data length], hex, text];
+}
+
+
 #pragma mark - Загрузка
 
 typedef enum {
@@ -233,6 +433,22 @@ typedef enum {
 
     /** Причина неудачного чтения: истёк предел ожидания или обрыв. */
     BOOL _timedOut;
+
+    /** Порт SOCKS и ключ запаса: «https://host:port». */
+    uint16_t _socks;
+    NSString *_linkKey;
+
+    /** Соединение взято из запаса, а не открыто заново. */
+    BOOL _reused;
+
+    /** От сервера пришёл хоть байт ответа: повторять запрос уже нельзя. */
+    BOOL _heard;
+
+    /** Ответ дочитан до конца; клиенту сказать об этом — после запаса. */
+    BOOL _finished;
+
+    /** Соединение после ответа можно вернуть в запас. */
+    BOOL _reusable;
 
     // Разбор тела.
     BOOL _chunked;
@@ -395,20 +611,74 @@ typedef enum {
             [self post:@selector(deliverError:) with:error];
         }
 
-        if (_ssl != NULL) {
-            SSLClose(_ssl);
-            CFRelease(_ssl);
+        /**
+         * Ответ дочитан чисто — соединение в запас, и только потом клиенту
+         * «готово»: его следующий запрос к тому же узлу тогда уже застанет
+         * соединение открытым.
+         */
+        if (error == nil && _reusable && !_stopped && _fd >= 0) {
+            YTTunnelLink *link = [[YTTunnelLink alloc] init];
+
+            link->ssl = _ssl;
+            link->socks = _socks;
             _ssl = NULL;
+
+            link->fd = _fd;
+            _fd = -1;
+
+            YTTunnelKeepLink(_linkKey, link);
         }
 
-        int fd = _fd;
-
-        _fd = -1;
-
-        if (fd >= 0) {
-            close(fd);
+        if (_finished) {
+            [self post:@selector(deliverFinish:) with:nil];
         }
+
+        [self dropConnection];
     }
+}
+
+- (void)dropConnection {
+    int fd = _fd;
+
+    // Сперва забываем: stop с другого потока не должен тронуть чужой сокет
+    // с тем же номером.
+    _fd = -1;
+    OSMemoryBarrier();
+
+    if (_ssl != NULL) {
+        SSLClose(_ssl);
+        CFRelease(_ssl);
+        _ssl = NULL;
+    }
+
+    if (fd >= 0) {
+        close(fd);
+    }
+}
+
+/**
+ * Туннель — сейчас или, если обход ещё подключается, когда поднимется.
+ *
+ * 0 — туннеля нет и не будет в пределах ожидания.
+ */
+- (uint16_t)waitForTunnel {
+    uint16_t socks = [YTWarp socksPort];
+
+    NSTimeInterval waited = 0;
+
+    while (socks == 0 && [YTWarp isConnecting] && !_stopped && waited < YTTunnelWaitLimit) {
+        usleep(200 * 1000);
+        waited += 0.2;
+
+        socks = [YTWarp socksPort];
+    }
+
+    if (waited >= 1 && !_stopped) {
+        NSLog(@"[YouTube/Туннель] %@: туннель ждали %.0f с%@", [[_request URL] host], waited,
+              socks != 0 ? @"" : @" и не дождались");
+    }
+
+    return socks;
 }
 
 /** Всё от соединения до последнего байта. nil — дошло до конца или остановлено. */
@@ -423,14 +693,126 @@ typedef enum {
         ? (uint16_t)[[url port] unsignedShortValue]
         : (secure ? 443 : 80);
 
-    uint16_t socks = [YTWarp socksPort];
+    _socks = [self waitForTunnel];
 
-    if (socks == 0) {
+    if (_stopped) {
+        return nil;
+    }
+
+    if (_socks == 0) {
         return [self errorWithCode:NSURLErrorCannotConnectToHost
                               text:YTLoc(@"Обход блокировок не подключён")];
     }
 
-    // --- До туннеля: локальный SOCKS5 на 127.0.0.1.
+    _linkKey = [NSString stringWithFormat:@"%@://%@:%u", secure ? @"https" : @"http",
+                [host lowercaseString], port];
+
+    /**
+     * Предел ожидания — у каждого чтения и записи, а не на весь ответ:
+     * видео течёт минутами, а замереть вправе не дольше, чем просил
+     * запрос. Совсем без предела поток ждал бы вечно.
+     */
+    NSTimeInterval timeout = [_request timeoutInterval];
+
+    if (timeout <= 0 || timeout > 120) {
+        timeout = 60;
+    }
+
+    /**
+     * Повтор — только пока сервер не сказал ни байта.
+     *
+     * Соединение из запаса могло тихо умереть — тогда просто берём другое.
+     * Свежее рвётся в туннеле: стек туннеля бросает соединение, по которому
+     * десять секунд ничего не пришло, и рукопожатие TLS падает. Второе
+     * соединение в журнале обычно проходило. Истёкший предел не повторяем:
+     * запрос и так прождал всё, что ему было отпущено.
+     */
+    BOOL retried = NO;
+
+    for (;;) {
+        NSError *error = [self attemptHost:host port:port secure:secure timeout:timeout];
+
+        if (error == nil || _stopped) {
+            return _stopped ? nil : error;
+        }
+
+        BOOL again = !_heard && (_reused || (!retried && !_timedOut));
+
+        [self dropConnection];
+
+        if (!again) {
+            return error;
+        }
+
+        NSLog(@"[YouTube/Туннель] %@ %@: %@ — %@", [_request HTTPMethod], host,
+              [error localizedDescription],
+              _reused ? @"соединение из запаса устарело, открываю новое" : @"пробую ещё раз");
+
+        if (!_reused) {
+            retried = YES;
+        }
+
+        _timedOut = NO;
+    }
+}
+
+- (void)applyTimeout:(NSTimeInterval)timeout {
+    struct timeval limit;
+
+    limit.tv_sec = (time_t)timeout;
+    limit.tv_usec = 0;
+
+    setsockopt(_fd, SOL_SOCKET, SO_RCVTIMEO, &limit, sizeof(limit));
+    setsockopt(_fd, SOL_SOCKET, SO_SNDTIMEO, &limit, sizeof(limit));
+}
+
+/** Одна попытка: соединение (из запаса или новое), запрос, ответ. */
+- (NSError *)attemptHost:(NSString *)host port:(uint16_t)port secure:(BOOL)secure
+                 timeout:(NSTimeInterval)timeout {
+    _heard = NO;
+    _reusable = NO;
+    _finished = NO;
+
+    YTTunnelLink *link = YTTunnelTakeLink(_linkKey, _socks);
+
+    _reused = (link != nil);
+
+    if (link != nil) {
+        _ssl = link->ssl;
+        link->ssl = NULL;
+
+        _fd = link->fd;
+        link->fd = -1;
+
+        [self applyTimeout:timeout];
+    } else {
+        NSError *failure = [self openHost:host port:port secure:secure timeout:timeout];
+
+        if (failure != nil || _stopped) {
+            return failure;
+        }
+    }
+
+    if (_stopped) {
+        return nil;
+    }
+
+    // --- Запрос.
+    NSData *head = [self requestHeadWithHost:host port:port secure:secure];
+    NSData *body = [self requestBody];
+
+    if (![self send:head] || ([body length] > 0 && ![self send:body])) {
+        return _stopped ? nil : [self errorWithCode:NSURLErrorNetworkConnectionLost
+                                               text:YTLoc(@"Соединение оборвалось")];
+    }
+
+    // --- Ответ.
+    return [self readResponse];
+}
+
+/** Новое соединение: локальный SOCKS5, CONNECT по имени, TLS. */
+- (NSError *)openHost:(NSString *)host port:(uint16_t)port secure:(BOOL)secure
+              timeout:(NSTimeInterval)timeout {
     int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
     if (fd < 0) {
@@ -444,31 +826,14 @@ typedef enum {
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
-    /**
-     * Предел ожидания — у каждого чтения и записи, а не на весь ответ:
-     * видео течёт минутами, а замереть вправе не дольше, чем просил
-     * запрос. Совсем без предела поток ждал бы вечно.
-     */
-    NSTimeInterval timeout = [_request timeoutInterval];
-
-    if (timeout <= 0 || timeout > 120) {
-        timeout = 60;
-    }
-
-    struct timeval limit;
-
-    limit.tv_sec = (time_t)timeout;
-    limit.tv_usec = 0;
-
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &limit, sizeof(limit));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &limit, sizeof(limit));
+    [self applyTimeout:timeout];
 
     struct sockaddr_in local;
 
     memset(&local, 0, sizeof(local));
     local.sin_len = sizeof(local);
     local.sin_family = AF_INET;
-    local.sin_port = htons(socks);
+    local.sin_port = htons(_socks);
     local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     if (connect(fd, (struct sockaddr *)&local, sizeof(local)) != 0) {
@@ -491,24 +856,10 @@ typedef enum {
 
     // --- TLS до сервера, с проверкой сертификата до запроса.
     if (secure) {
-        NSError *failure = [self handshakeWithHost:host];
-
-        if (failure != nil || _stopped) {
-            return failure;
-        }
+        return [self handshakeWithHost:host];
     }
 
-    // --- Запрос.
-    NSData *head = [self requestHeadWithHost:host port:port secure:secure];
-    NSData *body = [self requestBody];
-
-    if (![self send:head] || ([body length] > 0 && ![self send:body])) {
-        return _stopped ? nil : [self errorWithCode:NSURLErrorNetworkConnectionLost
-                                               text:YTLoc(@"Соединение оборвалось")];
-    }
-
-    // --- Ответ.
-    return [self readResponse];
+    return nil;
 }
 
 - (NSError *)handshakeWithHost:(NSString *)host {
@@ -523,6 +874,18 @@ typedef enum {
     SSLSetIOFuncs(_ssl, YTTunnelSSLRead, YTTunnelSSLWrite);
     SSLSetConnection(_ssl, (SSLConnectionRef)(intptr_t)_fd);
     SSLSetPeerDomainName(_ssl, name, strlen(name));
+
+    /**
+     * Возобновление сессии: второе и следующие рукопожатия с тем же узлом
+     * идут в один круг, без цепочки сертификатов и без её проверки.
+     *
+     * Проверку это не обходит: сессия попадает в кеш, только когда
+     * рукопожатие дошло до конца, а до конца оно доходит лишь после того,
+     * как сертификат прошёл проверку ниже.
+     */
+    const char *peer = [_linkKey UTF8String];
+
+    SSLSetPeerID(_ssl, peer, strlen(peer));
     SSLSetProtocolVersionMin(_ssl, kTLSProtocol1);
     SSLSetProtocolVersionMax(_ssl, kTLSProtocol12);
 
@@ -593,8 +956,8 @@ typedef enum {
  * Accept. Сжатие — gzip, распаковываем сами: ответы InnerTube сжимаются
  * раз в десять, а через туннель каждый байт дороже.
  *
- * `Connection: close` — одно соединение на запрос: конец ответа тогда
- * всегда понятен, и не нужно пула соединений.
+ * `Connection: keep-alive` — соединение после ответа остаётся открытым
+ * и ждёт в запасе следующего запроса к тому же узлу (см. YTTunnelLink).
  */
 - (NSData *)requestHeadWithHost:(NSString *)host port:(uint16_t)port secure:(BOOL)secure {
     NSURL *url = [_request URL];
@@ -691,7 +1054,7 @@ typedef enum {
     }
 
     [head appendString:@"Accept-Encoding: gzip\r\n"];
-    [head appendString:@"Connection: close\r\n\r\n"];
+    [head appendString:@"Connection: keep-alive\r\n\r\n"];
 
     return [head dataUsingEncoding:NSUTF8StringEncoding];
 }
@@ -834,6 +1197,8 @@ typedef enum {
                                    options:0
                                      range:NSMakeRange(0, [pending length])]).location == NSNotFound) {
             if ([pending length] > YTTunnelHeadLimit) {
+                NSLog(@"[YouTube/Туннель] Заголовки без конца: %@", YTTunnelPreview(pending));
+
                 return [self errorWithCode:NSURLErrorBadServerResponse
                                       text:YTLoc(@"Сервер ответил не по-человечески")];
             }
@@ -851,6 +1216,8 @@ typedef enum {
                     : [self lostError];
             }
 
+            _heard = YES;
+
             [pending appendBytes:buffer length:(NSUInteger)n];
         }
 
@@ -864,6 +1231,9 @@ typedef enum {
         NSArray *status = [[lines objectAtIndex:0] componentsSeparatedByString:@" "];
 
         if ([status count] < 2 || ![[status objectAtIndex:0] hasPrefix:@"HTTP/"]) {
+            NSLog(@"[YouTube/Туннель] Непонятный ответ%@: %@",
+                  _reused ? @" (соединение из запаса)" : @"", YTTunnelPreview(pending));
+
             return [self errorWithCode:NSURLErrorBadServerResponse
                                   text:YTLoc(@"Сервер ответил не по-человечески")];
         }
@@ -951,6 +1321,18 @@ static NSString *YTTunnelCanonicalName(NSString *name) {
         length = [[headers objectForKey:@"Content-Length"] longLongValue];
     }
 
+    /**
+     * Можно ли вернуть соединение в запас, когда тело кончится.
+     *
+     * У HTTP/1.1 соединение живёт, пока сервер не сказал «close»; у 1.0 —
+     * только если сказал «keep-alive».
+     */
+    NSString *connection = [[headers objectForKey:@"Connection"] lowercaseString];
+
+    BOOL keepAlive = [version isEqualToString:@"HTTP/1.1"]
+        ? [connection rangeOfString:@"close"].location == NSNotFound
+        : [connection rangeOfString:@"keep-alive"].location != NSNotFound;
+
     // То, что разобрали сами, клиенту уже не указ.
     [headers removeObjectForKey:@"Transfer-Encoding"];
 
@@ -997,7 +1379,8 @@ static NSString *YTTunnelCanonicalName(NSString *name) {
                     code == 204 || code == 304 || length == 0;
 
     if (bodyless) {
-        [self post:@selector(deliverFinish:) with:nil];
+        _reusable = keepAlive;
+        _finished = YES;
         return nil;
     }
 
@@ -1048,7 +1431,8 @@ static NSString *YTTunnelCanonicalName(NSString *name) {
                                           text:YTLoc(@"Соединение оборвалось")];
                 }
 
-                [self post:@selector(deliverFinish:) with:nil];
+                // Конец отмечен закрытием — соединения больше нет.
+                _finished = YES;
                 return nil;
             }
 
@@ -1056,8 +1440,12 @@ static NSString *YTTunnelCanonicalName(NSString *name) {
             count = (size_t)n;
         }
 
+        // Лишнее сверх обещанной длины — сервер сбился, соединению веры нет.
+        BOOL excess = NO;
+
         if (left >= 0 && (long long)count > left) {
             count = (size_t)left;
+            excess = YES;
         }
 
         NSError *failure = [self consume:bytes length:count];
@@ -1071,7 +1459,8 @@ static NSString *YTTunnelCanonicalName(NSString *name) {
         }
 
         if (left == 0 || (_chunked && _chunkState == YTChunkDone)) {
-            [self post:@selector(deliverFinish:) with:nil];
+            _reusable = keepAlive && !excess;
+            _finished = YES;
             return nil;
         }
     }
@@ -1087,6 +1476,9 @@ static NSString *YTTunnelCanonicalName(NSString *name) {
 
     if (_chunked) {
         if (![self dechunk:bytes length:length into:plain]) {
+            NSLog(@"[YouTube/Туннель] Куски не разобрались: %@",
+                  YTTunnelPreview([NSData dataWithBytes:bytes length:length]));
+
             return [self errorWithCode:NSURLErrorBadServerResponse
                                   text:YTLoc(@"Сервер ответил не по-человечески")];
         }
@@ -1223,7 +1615,8 @@ static NSString *YTTunnelCanonicalName(NSString *name) {
 static char YTTunnelLoadKey;
 
 static BOOL YTTunnelCanHandle(NSURLRequest *request) {
-    if (![YTWarp isActive]) {
+    // Подключается — тоже берём: запрос дождётся туннеля (waitForTunnel).
+    if (![YTWarp isActive] && ![YTWarp isConnecting]) {
         return NO;
     }
 

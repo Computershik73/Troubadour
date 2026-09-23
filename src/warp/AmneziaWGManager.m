@@ -388,6 +388,13 @@ static NSString * const kAWGEnabledKey   = @"awg_enabled_key";
             }
             config = [AWGWarpRegistrar bundledSeedConfig];
             strongSelf.lastError = nil;
+        } else {
+            NSString *proven = strongSelf.provenEndpoint;
+            if (proven.length > 0 && ![proven isEqualToString:config.peerEndpoint]) {
+                DLog(@"[AWG] личность получила %@, подключаю через проверенный %@",
+                     config.peerEndpoint, proven);
+                config.peerEndpoint = proven;
+            }
         }
         DLog(@"[AWG] private identity registered: %@ via %@ (client_id %@)",
              config.ipv4Address, config.peerEndpoint, config.warpClientID ?: @"none");
