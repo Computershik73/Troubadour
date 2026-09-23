@@ -5977,6 +5977,8 @@ static NSMutableArray *YTJamItems = nil;
 
     NSString *url = _streamUrl;
 
+    [[YTHlsProxy shared] forgetShownTrack];
+
     [self teardownPlayer];
     [self startPlayer:url];
 

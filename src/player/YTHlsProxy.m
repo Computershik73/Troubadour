@@ -3863,6 +3863,12 @@
 
 #pragma mark Прочее
 
+- (void)forgetShownTrack {
+    @synchronized ([YTHlsProxy class]) {
+        _shownItag = 0;
+    }
+}
+
 /** Разобранный заголовок дорожки — один раз на дорожку. */
 - (YTTrackInit *)parsedInitForItag:(NSInteger)itag sabr:(YTSabr *)sabr {
     NSNumber *key = [NSNumber numberWithInteger:itag];

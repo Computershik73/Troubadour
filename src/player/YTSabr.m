@@ -3666,8 +3666,27 @@ static NSMutableDictionary *YTLiveHeads = nil;
 
     YTHttpResponse *response = [YTHttp send:request bodyLimit:0 caching:NO];
 
+    /**
+     * Скорость — от заголовков ответа до последнего байта, а не от
+     * отправки запроса.
+     *
+     * Эта оценка уходит серверу полем 23, и по ней он выбирает дорожку.
+     * Мерили от отправки — и в замер попадало всё, что к скорости связи
+     * отношения не имеет: соединение, рукопожатие TLS, раздумья сервера,
+     * а через обход блокировок ещё и лишний круг до Cloudflare и повторы
+     * на умерших соединениях. На ответе 720p в двести килобайт эти
+     * полсекунды-секунда и были «скоростью»: оценка сползала с 6.4
+     * до 3.5 Мбит/с при связи, которая тянула кусок 1.7 МБ за полторы
+     * секунды, а сервер в ответ спускал 1080p на 720p, дальше на 480p,
+     * ответы мельчали — и оценка падала ещё. Нет заголовков — ответа
+     * не было, мерим как прежде.
+     */
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    NSTimeInterval from = (response.headersAt > startedAt && response.headersAt < now)
+        ? response.headersAt : startedAt;
+
     [YTPlaybackStats noteTransfer:[response.body length]
-                          elapsed:[NSDate timeIntervalSinceReferenceDate] - startedAt
+                          elapsed:now - from
                             paced:_liveMode];
 
     return response;
