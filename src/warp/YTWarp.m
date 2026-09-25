@@ -3,6 +3,11 @@
 #import <UIKit/UIKit.h>
 #import <libkern/OSAtomic.h>
 
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <string.h>
+
 #import "AmneziaWGManager.h"
 #import "DanteFixer.h"
 #import "DanteNetworkProbe.h"
@@ -63,6 +68,9 @@ static volatile int32_t YTWarpOfferSettled = 0;
 
     /** Включили из предложения: сказать, если не заработает. */
     BOOL _reportOutcome;
+
+    /** Обход на паузе: в системе включён VPN (см. holdForVPN). */
+    BOOL _pausedForVPN;
 }
 
 + (YTWarp *)shared {
@@ -72,6 +80,57 @@ static volatile int32_t YTWarpOfferSettled = 0;
     dispatch_once(&once, ^{ one = [[YTWarp alloc] init]; });
 
     return one;
+}
+
+#pragma mark - Системный VPN
+
+/**
+ * Включён ли в системе VPN — и как зовут его интерфейс.
+ *
+ * Признак — поднятый интерфейс туннеля с адресом IPv4: `utun` (IKEv2 и
+ * почти все приложения VPN), `ppp` (L2TP и PPTP на старых iOS), `ipsec`,
+ * а также `tun` и `tap`. Адрес IPv4 обязателен: пустой `utun0` с одним
+ * локальным IPv6 система держит у себя и без всякого VPN.
+ *
+ * Свой туннель сюда не попадает: WARP живёт внутри приложения
+ * и интерфейсов в системе не заводит.
+ */
+static BOOL YTWarpSystemVPN(NSString **which) {
+    struct ifaddrs *list = NULL;
+
+    if (getifaddrs(&list) != 0 || list == NULL) {
+        return NO;
+    }
+
+    static const char *prefixes[] = { "utun", "ppp", "ipsec", "tun", "tap", NULL };
+
+    BOOL found = NO;
+
+    for (struct ifaddrs *i = list; i != NULL && !found; i = i->ifa_next) {
+        if (i->ifa_addr == NULL || i->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+
+        if (!(i->ifa_flags & IFF_UP)) {
+            continue;
+        }
+
+        for (int k = 0; prefixes[k] != NULL; k++) {
+            if (strncmp(i->ifa_name, prefixes[k], strlen(prefixes[k])) == 0) {
+                found = YES;
+
+                if (which != NULL) {
+                    *which = [NSString stringWithUTF8String:i->ifa_name];
+                }
+
+                break;
+            }
+        }
+    }
+
+    freeifaddrs(list);
+
+    return found;
 }
 
 #pragma mark - Запуск
@@ -158,6 +217,10 @@ static volatile int32_t YTWarpOfferSettled = 0;
                                             userInfo:nil
                                              repeats:YES];
 
+    if ([self holdForVPN]) {
+        return;
+    }
+
     [self fix];
 }
 
@@ -166,10 +229,46 @@ static volatile int32_t YTWarpOfferSettled = 0;
     _watch = nil;
 
     _reportOutcome = NO;
+    _pausedForVPN = NO;
 
     [[DanteFixer sharedFixer] stop];
 
     [self somethingChanged];
+}
+
+/**
+ * Пока в системе включён VPN — обход на паузе.
+ *
+ * YouTube тогда и так идёт в обход блокировки, через VPN, а WARP поверх
+ * него только добавлял бы лишний круг и свои соединения, умирающие
+ * на старте. Настройку при этом не трогаем: человек включал обход сам,
+ * и как только VPN выключится, обход вернётся. Выключенный обход здесь
+ * не включается никогда — сюда приходят, только если он включён.
+ *
+ * YES — на паузе, подключать не надо.
+ */
+- (BOOL)holdForVPN {
+    NSString *iface = nil;
+    BOOL vpn = YTWarpSystemVPN(&iface);
+
+    if (vpn && !_pausedForVPN) {
+        _pausedForVPN = YES;
+
+        NSLog(@"[YouTube/WARP] В системе включён VPN (%@) — обход на паузе, пока он работает",
+              iface);
+
+        [[DanteFixer sharedFixer] stop];
+
+        [self somethingChanged];
+    } else if (!vpn && _pausedForVPN) {
+        _pausedForVPN = NO;
+
+        NSLog(@"[YouTube/WARP] VPN выключен — обход возвращается");
+
+        [self somethingChanged];
+    }
+
+    return _pausedForVPN;
 }
 
 - (void)retryNow {
@@ -178,6 +277,10 @@ static volatile int32_t YTWarpOfferSettled = 0;
     }
 
     if ([DanteFixer sharedFixer].state == DanteFixerStateRunning) {
+        return;
+    }
+
+    if ([self holdForVPN]) {
         return;
     }
 
@@ -234,7 +337,7 @@ static volatile int32_t YTWarpOfferSettled = 0;
     DanteFixer *fixer = [DanteFixer sharedFixer];
     AmneziaWGManager *manager = [AmneziaWGManager sharedManager];
 
-    BOOL active = [YTSettings usesWarp] &&
+    BOOL active = [YTSettings usesWarp] && !_pausedForVPN &&
                   fixer.state == DanteFixerStateFixed &&
                   manager.isConnected && manager.socksPort > 0;
 
@@ -252,7 +355,7 @@ static volatile int32_t YTWarpOfferSettled = 0;
      * Напрямую они в этой сети всё равно не пройдут: каждый висел свои
      * двадцать пять секунд и падал, а туннель тем временем уже поднимался.
      */
-    BOOL connecting = !active && [YTSettings usesWarp] &&
+    BOOL connecting = !active && [YTSettings usesWarp] && !_pausedForVPN &&
                       fixer.state == DanteFixerStateRunning;
 
     YTWarpPortValue = port;
@@ -286,6 +389,10 @@ static volatile int32_t YTWarpOfferSettled = 0;
         return YTLoc(@"Выключен");
     }
 
+    if ([self shared]->_pausedForVPN) {
+        return YTLoc(@"Пауза: включён VPN");
+    }
+
     DanteFixer *fixer = [DanteFixer sharedFixer];
 
     switch (fixer.state) {
@@ -317,6 +424,23 @@ static volatile int32_t YTWarpOfferSettled = 0;
  */
 - (void)watchTick {
     if (![YTSettings usesWarp]) {
+        return;
+    }
+
+    /**
+     * VPN проверяем на каждом ходе сторожа и при возврате в приложение:
+     * включают и выключают его в Настройках системы, то есть как раз
+     * уйдя из приложения и вернувшись.
+     */
+    BOOL wasPaused = _pausedForVPN;
+
+    if ([self holdForVPN]) {
+        return;
+    }
+
+    if (wasPaused) {
+        [self fix];
+
         return;
     }
 
@@ -516,6 +640,16 @@ static BOOL YTWarpLooksBlocked(NSError *error) {
 
 - (void)noteBlocked:(BOOL)blocked host:(NSString *)host error:(NSError *)error {
     if (YTWarpOfferSettled) {
+        return;
+    }
+
+    /**
+     * Через VPN неудачи к YouTube — не блокировка: её VPN и обходит.
+     * Считать их к предложению незачем.
+     */
+    if (blocked && YTWarpSystemVPN(NULL)) {
+        _failures = 0;
+
         return;
     }
 

@@ -3307,7 +3307,22 @@ static const CGFloat YTPageMargin = 16;
         if (!streamOnly) {
             NSDictionary *details = [YTApi videoDetails:videoId playlist:playlist];
 
-            YTMain(^{ [self applyDetails:details]; });
+            YTMain(^{
+                /**
+                 * Сверяем ролик, а не поколение загрузки: перезапуск одного
+                 * потока (эфир, смена качества) тоже начинает новое
+                 * поколение, а сведения при этом всё те же и нужны.
+                 */
+                if (![_videoId isEqualToString:videoId]) {
+                    return;
+                }
+
+                if (details != nil) {
+                    [self applyDetails:details];
+                } else {
+                    [self retryDetails:videoId playlist:playlist attempt:1];
+                }
+            });
         }
 
         NSDictionary *player = [YTApi playerResponse:videoId];
@@ -4129,6 +4144,63 @@ static const CGFloat YTPageMargin = 16;
     }
 
     [[self view] setNeedsLayout];
+}
+
+/**
+ * Сведения о ролике не пришли — просим ещё, с нарастающей паузой.
+ *
+ * Прежде неудача была окончательной: страница так и оставалась без
+ * названия, канала и оценок, хотя ролик играл. А случается она чаще всего
+ * на минутном провале связи — журнал 25.09.2026: iPhone 4, сорок секунд
+ * без ответа и через туннель, и мимо него (SponsorBlock тоже не дождался),
+ * — и сразу за провалом тот же запрос прошёл бы. Четыре попытки
+ * за полминуты: дольше ждать нет смысла, человек уже смотрит.
+ */
+- (void)retryDetails:(NSString *)videoId
+            playlist:(NSString *)playlist
+             attempt:(NSInteger)attempt {
+    if (attempt > 4) {
+        NSLog(@"[YouTube/Плеер] Сведения о ролике так и не пришли — сдаёмся");
+
+        return;
+    }
+
+    NSTimeInterval delay = 3.0 * attempt;
+
+    NSLog(@"[YouTube/Плеер] Сведения о ролике не пришли — попытка %ld через %.0f с",
+          (long)attempt + 1, delay);
+
+    __weak YTPlayerViewController *weak = self;
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        YTPlayerViewController *me = weak;
+
+        if (me == nil || ![me->_videoId isEqualToString:videoId]) {
+            return;
+        }
+
+        YTAsync(^{
+            NSDictionary *details = [YTApi videoDetails:videoId playlist:playlist];
+
+            YTMain(^{
+                YTPlayerViewController *again = weak;
+
+                if (again == nil || ![again->_videoId isEqualToString:videoId]) {
+                    return;
+                }
+
+                if (details != nil) {
+                    NSLog(@"[YouTube/Плеер] Сведения о ролике пришли с попытки %ld",
+                          (long)attempt + 1);
+
+                    [again applyDetails:details];
+                } else {
+                    [again retryDetails:videoId playlist:playlist attempt:attempt + 1];
+                }
+            });
+        });
+    });
 }
 
 - (void)applyDetails:(NSDictionary *)details {
