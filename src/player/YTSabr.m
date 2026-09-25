@@ -2216,6 +2216,33 @@ enum { YTLiveCushion = 120 };
                             NSLog(@"[YouTube/Подача] Эфир: заголовок дорожки %ld "
                                   @"взят из куска (%lu б)",
                                   (long)header.itag, (unsigned long)media);
+                        } else if (isVideo && header.itag > 0 &&
+                                   [self videoInitForItag:header.itag] == nil) {
+                            /**
+                             * Кусок новой дорожки — и её заголовок тоже берём.
+                             *
+                             * Прежде голову брали только у самого первого
+                             * куска, а у остальных выбрасывали. Эфир через
+                             * WARP начался дорожкой 135 (480p), со второго
+                             * куска сервер перешёл на 136 (720p) — и кадры
+                             * 720p весь эфир шли через описание кодека 480p:
+                             * зелёные поля и рассыпанные полосы на экране.
+                             * Через VPN все куски приходили одной дорожкой,
+                             * и ошибка не проявлялась.
+                             *
+                             * Нынешним заголовок тоже становится этот:
+                             * прокси по смене номера перечитает его, а куски
+                             * прежней дорожки соберёт с её собственным
+                             * (YTHlsProxy, parsedInitForItag:).
+                             */
+                            [self keepVideoInit:head itag:header.itag];
+
+                            _videoInit = head;
+                            _videoInitItag = header.itag;
+
+                            NSLog(@"[YouTube/Подача] Эфир: заголовок дорожки %ld "
+                                  @"взят из её куска (%lu б)",
+                                  (long)header.itag, (unsigned long)media);
                         } else if (!isVideo && _audioInit == nil) {
                             _audioInit = head;
                             _audioInitItag = header.itag;
