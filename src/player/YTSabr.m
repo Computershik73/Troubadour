@@ -3688,31 +3688,77 @@ static NSMutableDictionary *YTLiveHeads = nil;
 }
 
 /** Сеть — и только сеть: ничего общего здесь не трогается. */
+/**
+ * С какого байта тела начинается замер скорости.
+ *
+ * Первые десятки килобайт каждого ответа идут в разгоне TCP: после паузы
+ * между запросами окно у сервера снова маленькое и растёт по кругу
+ * обмена. Чем длиннее круг — а через обход блокировок он длиннее, — тем
+ * большую долю ответа съедает разгон. Мерить надо то, что после.
+ */
+static const NSUInteger YTSabrWarmBytes = 64 * 1024;
+
+/** Меньше этого после разгона — замер ничего не говорит, мерим целиком. */
+static const NSUInteger YTSabrMeasureBytes = 128 * 1024;
+
 - (YTHttpResponse *)perform:(NSMutableURLRequest *)request {
     NSTimeInterval startedAt = [NSDate timeIntervalSinceReferenceDate];
 
-    YTHttpResponse *response = [YTHttp send:request bodyLimit:0 caching:NO];
+    /**
+     * Тело читаем потоком и собираем сами — ради отметки времени
+     * посреди тела (см. YTSabrWarmBytes). Ответ от этого не меняется.
+     */
+    NSMutableData *body = [NSMutableData data];
+
+    __block NSTimeInterval warmAt = 0;
+    __block NSUInteger warmBytes = 0;
+
+    YTHttpResponse *response = [YTHttp stream:request
+                                    onHeaders:^(YTHttpResponse *head) {
+        // Новый ответ — тело с нуля, как делает и обычное чтение.
+        [body setLength:0];
+        warmAt = 0;
+        warmBytes = 0;
+    }
+                                      onChunk:^BOOL(NSData *chunk) {
+        [body appendData:chunk];
+
+        if (warmAt == 0 && [body length] >= YTSabrWarmBytes) {
+            warmAt = [NSDate timeIntervalSinceReferenceDate];
+            warmBytes = [body length];
+        }
+
+        return YES;
+    }];
+
+    response.body = body;
 
     /**
-     * Скорость — от заголовков ответа до последнего байта, а не от
-     * отправки запроса.
+     * Скорость — по установившейся части тела.
      *
      * Эта оценка уходит серверу полем 23, и по ней он выбирает дорожку.
-     * Мерили от отправки — и в замер попадало всё, что к скорости связи
-     * отношения не имеет: соединение, рукопожатие TLS, раздумья сервера,
-     * а через обход блокировок ещё и лишний круг до Cloudflare и повторы
-     * на умерших соединениях. На ответе 720p в двести килобайт эти
-     * полсекунды-секунда и были «скоростью»: оценка сползала с 6.4
-     * до 3.5 Мбит/с при связи, которая тянула кусок 1.7 МБ за полторы
-     * секунды, а сервер в ответ спускал 1080p на 720p, дальше на 480p,
-     * ответы мельчали — и оценка падала ещё. Нет заголовков — ответа
-     * не было, мерим как прежде.
+     * Сперва мерили от отправки запроса, потом от заголовков ответа
+     * (1.5-8) — и всё равно выходило вдвое меньше правды: через WARP
+     * в окнах «за секунду» связь отдавала 1.1–1.3 МБ/с, а оценка стояла
+     * на 4 Мбит/с. Ответ подачи — триста-пятьсот килобайт после паузы,
+     * и почти весь он приходится на разгон. Сервер по такой оценке
+     * не тянул 720p60 и спускал ролик на 480p30.
+     *
+     * Теперь мерим от 64-го килобайта до последнего байта. Ответ
+     * короче — мерим от заголовков, как прежде.
      */
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+
+    NSUInteger measured = [body length];
     NSTimeInterval from = (response.headersAt > startedAt && response.headersAt < now)
         ? response.headersAt : startedAt;
 
-    [YTPlaybackStats noteTransfer:[response.body length]
+    if (warmAt > 0 && [body length] >= warmBytes + YTSabrMeasureBytes) {
+        measured = [body length] - warmBytes;
+        from = warmAt;
+    }
+
+    [YTPlaybackStats noteTransfer:measured
                           elapsed:now - from
                             paced:_liveMode];
 
