@@ -73,6 +73,15 @@ static NSString *YTNSigBase64(NSData *data) {
     /** Подготовка закончилась — удачей или нет; по нему ждут в `transform:`. */
     dispatch_group_t _settled;
     BOOL _pending;
+
+    /**
+     * Готовые ответы: `n` → [сборка плеера, ответ].
+     *
+     * Один и тот же `n` при открытии ролика расшифровывается десяток раз
+     * (по разу на каждую дорожку), а после выгрузки решателя (см.
+     * releaseHeavy) ради уже известного ответа поднимать его незачем.
+     */
+    NSMutableDictionary *_answers;
 }
 
 + (YTNSig *)shared {
@@ -87,9 +96,63 @@ static NSString *YTNSigBase64(NSData *data) {
 - (instancetype)init {
     if ((self = [super init])) {
         _settled = dispatch_group_create();
+
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(releaseHeavy)
+                                                     name:YTReleaseHeavyNotification
+                                                   object:nil];
     }
 
     return self;
+}
+
+/**
+ * Память кончается — решатель выгружается.
+ *
+ * Веб-вид решателя держит весь скрипт плеера, исполненный целиком: два
+ * с половиной мегабайта исходника и всё, что движок JavaScript из них
+ * построил. На iPad 1 (256 МБ на всё) это одна из самых крупных частей
+ * приложения, а нужен он только в миг расшифровки нового адреса —
+ * всё остальное время он просто лежит. Журнал 27.09.2026: решатель
+ * поднялся, полторы минуты пролежал без дела, система дважды попросила
+ * памяти, ничего не получила — и сняла приложение при выходе плеера
+ * из полноэкранного режима.
+ *
+ * Поднимается заново сам, при следующей расшифровке: скрипт лежит
+ * в кеше на диске, сеть не нужна. Идущую подготовку не трогаем.
+ */
+- (void)releaseHeavy {
+    if (_web == nil) {
+        return;
+    }
+
+    @synchronized (self) {
+        if (_pending) {
+            return;
+        }
+
+        _started = NO;
+        _ready = NO;
+    }
+
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(bootTimedOut)
+                                               object:nil];
+
+    UIWebView *web = _web;
+
+    _web = nil;
+    _loaded = NO;
+
+    [web setDelegate:nil];
+    [web stopLoading];
+
+    // Пустая страница — чтобы движок отпустил скрипт, не дожидаясь,
+    // когда веб-вид дойдёт до освобождения.
+    [web loadHTMLString:@"" baseURL:nil];
+    [web removeFromSuperview];
+
+    NSLog(@"[YouTube/Ключ] Памяти мало — решатель выгружен, поднимем, когда понадобится");
 }
 
 #pragma mark Подготовка
@@ -451,12 +514,22 @@ static NSString *YTNSigBase64(NSData *data) {
         return nil;
     }
 
+    NSString *player = [YTPlayerJs playerId];
+
+    @synchronized (self) {
+        NSArray *known = [_answers objectForKey:n];
+
+        if (known != nil && [player length] > 0 &&
+            [[known objectAtIndex:0] isEqualToString:player]) {
+            return [known objectAtIndex:1];
+        }
+    }
+
     /**
      * Ждать можно только с фоновой очереди: главный поток — тот самый,
      * на котором страница поднимается и отчитывается.
      */
     if (![NSThread isMainThread]) {
-        NSString *player = [YTPlayerJs playerId];
         BOOL stale;
 
         @synchronized (self) {
@@ -477,7 +550,19 @@ static NSString *YTNSigBase64(NSData *data) {
         return nil;
     }
 
-    return [self evaluate:n];
+    NSString *result = [self evaluate:n];
+
+    if ([result length] > 0 && [player length] > 0) {
+        @synchronized (self) {
+            if (_answers == nil || [_answers count] > 64) {
+                _answers = [[NSMutableDictionary alloc] init];
+            }
+
+            [_answers setObject:[NSArray arrayWithObjects:player, result, nil] forKey:n];
+        }
+    }
+
+    return result;
 }
 
 - (NSString *)fixUrl:(NSString *)url {
