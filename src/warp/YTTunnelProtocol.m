@@ -392,7 +392,13 @@ static void YTTunnelKeepLink(NSString *key, YTTunnelLink *link) {
     }
 }
 
-/** Начало непонятного ответа — в журнал: по нему видно, что пришло. */
+/**
+ * Начало непонятного ответа — в журнал: по нему видно, что пришло.
+ *
+ * В готовой сборке журнала нет вовсе (FINALPACKAGE выбрасывает NSLog),
+ * и без пометки функция считалась бы неиспользованной — а это ошибка.
+ */
+__attribute__((unused))
 static NSString *YTTunnelPreview(NSData *data) {
     NSUInteger length = MIN([data length], (NSUInteger)48);
     const uint8_t *bytes = [data bytes];
