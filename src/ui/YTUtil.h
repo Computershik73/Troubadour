@@ -291,6 +291,16 @@ CGFloat YTStatusBarHeight(void);
 /** Память кончается: отдать всё, что можно взять заново. */
 extern NSString *const YTReleaseHeavyNotification;
 
+/**
+ * Тесно ли с памятью: держать меньше запаса про запас.
+ *
+ * Всегда — на устройствах меньше чем с 300 МБ (iPad 1: 256 на всё, и
+ * система снимает приложение уже на 60 МБ), а на остальных — после первой
+ * просьбы системы освободить память (YTSetTightMemory).
+ */
+BOOL YTTightMemory(void);
+void YTSetTightMemory(void);
+
 @interface YTShare : NSObject
 
 + (void)presentSheet:(id)sheet from:(UIView *)anchor in:(UIViewController *)host;

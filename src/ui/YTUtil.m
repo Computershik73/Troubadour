@@ -1163,6 +1163,23 @@ static UINavigationController *YTNavControllerRef = nil;
 
 NSString *const YTReleaseHeavyNotification = @"YTReleaseHeavy";
 
+static volatile BOOL YTTightMemoryAsked = NO;
+
+BOOL YTTightMemory(void) {
+    static BOOL small = NO;
+    static dispatch_once_t once;
+
+    dispatch_once(&once, ^{
+        small = [[NSProcessInfo processInfo] physicalMemory] < 300ULL * 1024 * 1024;
+    });
+
+    return small || YTTightMemoryAsked;
+}
+
+void YTSetTightMemory(void) {
+    YTTightMemoryAsked = YES;
+}
+
 /**
  * Список просмотренного, накопленный сборками 1.4-182 и 1.4-183, выбрасываем.
  *

@@ -10,6 +10,7 @@
 #import "YTUmp.h"
 #import "YTMp4.h"
 #import "YTPlaybackStats.h"
+#import "YTUtil.h"
 
 @implementation YTSabrFormat
 
@@ -2328,8 +2329,10 @@ enum { YTLiveCushion = 120 };
              * не снимет приложение. На 1080p это четыре мегабайта
              * за штуку: три десятка, и памяти нет.
              */
+            // Тесно с памятью (iPad 1, либо система уже просила) — потолок ниже.
             [self capStorage:(isVideo ? _videoSegments : _audioSegments)
-                        keep:(isVideo ? 24 : 16)];
+                        keep:(YTTightMemory() ? (isVideo ? 10 : 8)
+                                              : (isVideo ? 24 : 16))];
 
             /**
              * Дорожку запоминаем по **каждому** куску, а не только
