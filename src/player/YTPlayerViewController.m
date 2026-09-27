@@ -825,6 +825,11 @@ static const CGFloat YTPageMargin = 16;
                                                  name:YTSabrLostNotification
                                                object:nil];
 
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(sabrRefusedPick)
+                                                 name:YTSabrPinRefusedNotification
+                                               object:nil];
+
     [self adoptFromMini];
 
     [self load];
@@ -7467,6 +7472,61 @@ static NSMutableArray *YTJamItems = nil;
           (unsigned long)[ready count], [self currentSeconds]);
 
     [self pickHeight:_pickedHeight force:YES];
+}
+
+/**
+ * Сервер не даёт выбранное качество — берём его готовыми адресами.
+ *
+ * В ответе TV-клиента готовых адресов почти нет (одна дорожка 360p),
+ * поэтому за ними — к VISIONOS, как и при отказе подачи на старте.
+ * Выбранной высоты нет и там — остаёмся на подаче: хуже, чем есть,
+ * делать незачем. Один раз на ролик.
+ */
+- (void)sabrRefusedPick {
+    if (![NSThread isMainThread]) {
+        [self performSelectorOnMainThread:@selector(sabrRefusedPick)
+                               withObject:nil
+                            waitUntilDone:NO];
+
+        return;
+    }
+
+    if (_sabrFellBack || _formats != nil || _pickedHeight <= 0 ||
+        [[YTHlsProxy shared] isLive]) {
+        return;
+    }
+
+    _sabrFellBack = YES;
+
+    NSString *videoId = _videoId;
+    NSInteger wanted = _pickedHeight;
+
+    YTAsync(^{
+        NSDictionary *plain = [YTApi androidVrPlayerResponse:videoId];
+        NSArray *ready = [YTStreams formatsFrom:plain];
+        NSArray *heights = [YTStreams heightsIn:ready];
+
+        YTMain(^{
+            if (![_videoId isEqualToString:videoId]) {
+                return;
+            }
+
+            if (![heights containsObject:[NSNumber numberWithInteger:wanted]]) {
+                NSLog(@"[YouTube/Плеер] Готовых адресов %ldp нет — остаёмся на подаче",
+                      (long)wanted);
+
+                return;
+            }
+
+            _formats = ready;
+            _heights = heights;
+
+            NSLog(@"[YouTube/Плеер] Сервер не дал %ldp подачей — играем готовыми "
+                  @"адресами с %.1f с", (long)wanted, [self currentSeconds]);
+
+            [self pickHeight:wanted force:YES];
+        });
+    });
 }
 
 - (NSString *)menuPageTitle {

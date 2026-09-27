@@ -12,6 +12,15 @@
 extern NSString *const YTSabrLostNotification;
 
 /**
+ * Сервер не даёт выбранную человеком дорожку.
+ *
+ * Рассылается подачей один раз за показ, когда при ручном выборе
+ * качества сервер шесть фрагментов подряд присылает другую дорожку.
+ * Слушает плеер: берёт готовые адреса, где дорожка ровно та, что выбрана.
+ */
+extern NSString *const YTSabrPinRefusedNotification;
+
+/**
  * Одна дорожка из `streamingData.adaptiveFormats`.
  *
  * Порт `PlayerFormatModel` из Video.xaml.cs — поля те же и в том же смысле.

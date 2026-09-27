@@ -10,6 +10,7 @@
 #import "YTSettings.h"
 
 NSString *const YTSabrLostNotification = @"YTSabrLost";
+NSString *const YTSabrPinRefusedNotification = @"YTSabrPinRefused";
 
 /**
  * Ступень качества — привычным числом, а не тем, что вышло из размеров.

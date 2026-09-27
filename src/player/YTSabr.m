@@ -257,6 +257,10 @@
 
     /** Какая дорожка приходила в прошлый раз — по ней и видно смену. */
     NSInteger _deliveredItag;
+
+    /** Сколько фрагментов подряд сервер прислал не ту дорожку при ручном выборе. */
+    NSInteger _pinRefusals;
+    BOOL _pinRefusalTold;
     NSTimeInterval _duration;
 
     /** Собираемые сейчас сегменты: номер заголовка → заголовок и байты. */
@@ -752,6 +756,8 @@ enum { YTLiveCushion = 120 };
     }
 
     if (itag == _pinnedVideo.itag) {
+        _pinRefusals = 0;
+
         return;
     }
 
@@ -760,6 +766,27 @@ enum { YTLiveCushion = 120 };
           _hardPin ? @"держим свою" : @"принимаем и закрепляем присланную");
 
     if (_hardPin) {
+        /**
+         * Держать свою бесполезно, если сервер её не даёт вовсе.
+         *
+         * Так бывает с роликами, у которых 720p и 1080p есть только
+         * в шестидесяти кадрах: выбрав 1080p, человек получал 480p30,
+         * а в журнале — сотни «держим свою» (iPhone 5, 15–21 Мбит/с,
+         * возможности 1080p60 заявлены честно). Шесть отказов подряд —
+         * и плеер переходит на готовые адреса, где дорожка — выбранная.
+         */
+        _pinRefusals++;
+
+        if (_pinRefusals >= 6 && !_pinRefusalTold && !_liveMode) {
+            _pinRefusalTold = YES;
+
+            NSLog(@"[YouTube/Подача] Сервер не даёт выбранную дорожку %ld — "
+                  @"переходим на готовые адреса", (long)_pinnedVideo.itag);
+
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:YTSabrPinRefusedNotification object:nil];
+        }
+
         return;
     }
 
