@@ -223,6 +223,30 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
     });
 }
 
+- (void)streamOpening {
+    if (!YTTightMemory()) {
+        return;
+    }
+
+    @synchronized (self) {
+        _busyUntil = 0;
+    }
+
+    YTMain(^{
+        if (_web == nil) {
+            return;
+        }
+
+        NSLog(@"[YouTube/Ключ] Плеер поднимается — решатель уходит, с памятью тесно");
+
+        [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                                 selector:@selector(releaseHeavy)
+                                                   object:nil];
+
+        [self releaseHeavy];
+    });
+}
+
 #pragma mark Подготовка
 
 - (void)prepare {

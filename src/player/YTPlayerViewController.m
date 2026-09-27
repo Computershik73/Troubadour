@@ -5047,6 +5047,9 @@ static NSMutableArray *YTJamItems = nil;
 
     [self teardownPlayer];
 
+    // Адрес уже с расшифрованным `n` — на тесной памяти решатель уходит до плеера.
+    [[YTNSig shared] streamOpening];
+
     // Новый поток — новый счёт спусков; перезавод декодера идёт по тому
     // же адресу и счёт не сбрасывает.
     if (![url isEqualToString:_streamUrl]) {
