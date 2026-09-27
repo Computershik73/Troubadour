@@ -17,6 +17,7 @@
 #import "YTSettings.h"
 #import "YTPlayerJs.h"
 #import "YTMiniPlayer.h"
+#import "YTNSig.h"
 #import "YTNowPlaying.h"
 #import "YTAuth.h"
 #import "YTDislikes.h"
@@ -3244,6 +3245,15 @@ static const CGFloat YTPageMargin = 16;
 }
 
 - (void)load {
+    /**
+     * Решатель `n` — поднимать сразу, не дожидаясь ответа `/player`.
+     *
+     * После выгрузки по нехватке памяти он поднимается заново, и на iPad 1
+     * это десять секунд с лишним. Начав сейчас, выигрываем время, которое
+     * уходит на `next` и `/player`. Уже поднят — ничего не делает.
+     */
+    [[YTNSig shared] prepare];
+
     // Таймер ожидания — в сторону; признаки остаются: попытка идёт через нас же.
     [_broadcastWatch invalidate];
     _broadcastWatch = nil;

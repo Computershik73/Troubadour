@@ -17,8 +17,17 @@ static NSString *const YTNSigUserAgent =
 /** Известная строка для проверки, что решатель и канал исправны. */
 static NSString *const YTNSigSample = @"DhpWuaCJRFiGbHK";
 
-/** Сколько ждать готовности, если подготовка ещё идёт. */
-static const NSTimeInterval YTNSigReadyWait = 12.0;
+/**
+ * Сколько ждать готовности, если подготовка ещё идёт.
+ *
+ * На iPad 1 решатель поднимается десять-тринадцать секунд, а ждали мы
+ * двенадцать: подача уходила с нерасшифрованным `n`, сервер отвечал
+ * 403, и ролик уезжал на готовые адреса (журнал 27.09.2026, 12:04:28 —
+ * запрос подачи, 12:04:29 — решатель готов). Там ждём дольше.
+ */
+static NSTimeInterval YTNSigReadyWait(void) {
+    return YTTightMemory() ? 30.0 : 12.0;
+}
 
 /** Сколько ждать отчёта решателя, прежде чем счесть подготовку неудавшейся. */
 static const NSTimeInterval YTNSigBootTimeout = 60.0;
@@ -154,17 +163,6 @@ static NSString *YTNSigBase64(NSData *data) {
 
     NSLog(@"[YouTube/Ключ] Решатель выгружен, поднимем, когда понадобится (занято %.0f МБ)",
           YTResidentMegabytes());
-}
-
-/** Тесно с памятью — решатель уходит после простоя (см. `transform:`). */
-- (void)idleUnload {
-    if (_web == nil) {
-        return;
-    }
-
-    NSLog(@"[YouTube/Ключ] Решатель без дела двадцать секунд — выгружаем (тесно с памятью)");
-
-    [self releaseHeavy];
 }
 
 #pragma mark Подготовка
@@ -555,7 +553,7 @@ static NSString *YTNSigBase64(NSData *data) {
         [self prepareForced:stale];
 
         dispatch_group_wait(_settled,
-            dispatch_time(DISPATCH_TIME_NOW, (int64_t)(YTNSigReadyWait * NSEC_PER_SEC)));
+            dispatch_time(DISPATCH_TIME_NOW, (int64_t)(YTNSigReadyWait() * NSEC_PER_SEC)));
     }
 
     if (![self isReady]) {
@@ -563,23 +561,6 @@ static NSString *YTNSigBase64(NSData *data) {
     }
 
     NSString *result = [self evaluate:n];
-
-    /**
-     * Тесно с памятью — решатель уходит через двадцать секунд простоя.
-     *
-     * Нужен он только в миг расшифровки, а на iPad 1 приложение снимали
-     * во время показа, когда решатель просто лежал. Ждать просьбы системы
-     * там поздно: она приходит, когда до снятия уже рукой подать.
-     */
-    if (YTTightMemory()) {
-        YTMain(^{
-            [NSObject cancelPreviousPerformRequestsWithTarget:self
-                                                     selector:@selector(idleUnload)
-                                                       object:nil];
-
-            [self performSelector:@selector(idleUnload) withObject:nil afterDelay:20.0];
-        });
-    }
 
     if ([result length] > 0 && [player length] > 0) {
         @synchronized (self) {
@@ -609,7 +590,14 @@ static NSString *YTNSigBase64(NSData *data) {
 
     NSString *fixed = [self transform:value];
 
-    if ([fixed length] == 0 || [fixed isEqualToString:value]) {
+    if ([fixed length] == 0) {
+        // Без расшифровки раздача отвечает 403 — пусть это будет видно.
+        NSLog(@"[YouTube/Ключ] `n` не расшифрован — решатель не готов, адрес уходит как есть");
+
+        return url;
+    }
+
+    if ([fixed isEqualToString:value]) {
         return url;
     }
 
