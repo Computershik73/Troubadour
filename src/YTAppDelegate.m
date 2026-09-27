@@ -2,6 +2,7 @@
 
 #import <AVFoundation/AVFoundation.h>
 
+#import "YTApi.h"
 #import "YTAuth.h"
 #import "YTWebAuth.h"
 #import "YTNSig.h"
@@ -50,7 +51,8 @@
                     object:nil
                      queue:nil
                 usingBlock:^(NSNotification *note) {
-        NSLog(@"[YouTube/Память] Система просит освободить память");
+        NSLog(@"[YouTube/Память] Система просит освободить память (занято %.0f МБ)",
+              YTResidentMegabytes());
 
         // С этого мига и до конца работы запас держим поменьше.
         YTSetTightMemory();
@@ -103,7 +105,28 @@
      * и остаётся жить: чеканка потом занимает миллисекунды.
      */
     [[YTPoToken shared] prepare];
-    [[YTNSig shared] prepare];
+
+    /**
+     * Решатель `n` — сразу, только если памяти вдоволь.
+     *
+     * Он исполняет весь скрипт плеера, и на iPad 1 подъём его вместе
+     * с чеканщиком и главной — пик, на который памяти не хватает. Там
+     * он поднимется сам, при первой расшифровке.
+     */
+    if (!YTTightMemory()) {
+        [[YTNSig shared] prepare];
+    }
+
+    /**
+     * Запись просмотра, которую прошлый запуск не закрыл, — дослать.
+     *
+     * Через несколько секунд, когда вход уже поднят и первые запросы
+     * главной ушли: история подождёт, а старт — нет.
+     */
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        YTAsync(^{ [YTApi flushPendingWatch]; });
+    });
 
     [self configureAudioSession];
 

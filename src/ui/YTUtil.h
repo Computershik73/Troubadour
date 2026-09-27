@@ -301,6 +301,14 @@ extern NSString *const YTReleaseHeavyNotification;
 BOOL YTTightMemory(void);
 void YTSetTightMemory(void);
 
+/**
+ * Сколько приложение занимает в памяти прямо сейчас, в мегабайтах.
+ *
+ * Для журнала: iPad 1 снимает приложение уже на 55–75 МБ, и без этого
+ * числа по журналу не понять, что именно его раздуло.
+ */
+double YTResidentMegabytes(void);
+
 @interface YTShare : NSObject
 
 + (void)presentSheet:(id)sheet from:(UIView *)anchor in:(UIViewController *)host;

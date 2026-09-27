@@ -152,7 +152,19 @@ static NSString *YTNSigBase64(NSData *data) {
     [web loadHTMLString:@"" baseURL:nil];
     [web removeFromSuperview];
 
-    NSLog(@"[YouTube/Ключ] Памяти мало — решатель выгружен, поднимем, когда понадобится");
+    NSLog(@"[YouTube/Ключ] Решатель выгружен, поднимем, когда понадобится (занято %.0f МБ)",
+          YTResidentMegabytes());
+}
+
+/** Тесно с памятью — решатель уходит после простоя (см. `transform:`). */
+- (void)idleUnload {
+    if (_web == nil) {
+        return;
+    }
+
+    NSLog(@"[YouTube/Ключ] Решатель без дела двадцать секунд — выгружаем (тесно с памятью)");
+
+    [self releaseHeavy];
 }
 
 #pragma mark Подготовка
@@ -551,6 +563,23 @@ static NSString *YTNSigBase64(NSData *data) {
     }
 
     NSString *result = [self evaluate:n];
+
+    /**
+     * Тесно с памятью — решатель уходит через двадцать секунд простоя.
+     *
+     * Нужен он только в миг расшифровки, а на iPad 1 приложение снимали
+     * во время показа, когда решатель просто лежал. Ждать просьбы системы
+     * там поздно: она приходит, когда до снятия уже рукой подать.
+     */
+    if (YTTightMemory()) {
+        YTMain(^{
+            [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                                     selector:@selector(idleUnload)
+                                                       object:nil];
+
+            [self performSelector:@selector(idleUnload) withObject:nil afterDelay:20.0];
+        });
+    }
 
     if ([result length] > 0 && [player length] > 0) {
         @synchronized (self) {

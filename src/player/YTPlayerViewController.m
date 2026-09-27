@@ -449,6 +449,15 @@ static const CGFloat YTPageMargin = 16;
     /** Отмечали ли уже этот ролик просмотренным. */
     BOOL _watchReported;
 
+    /**
+     * Ответ `/player`, из которого берутся адреса сигналов просмотра.
+     *
+     * Первый, запрошенный от имени выбранного канала, — и он не меняется,
+     * даже когда играть пришлось готовыми адресами VISIONOS: сигналы
+     * по его адресам сервер записывал бы не в историю канала.
+     */
+    NSDictionary *_trackingJson;
+
     /** Запись просмотра: конец прошлого отрезка и когда он начался. */
     NSTimeInterval _watchSegmentFrom;
     NSTimeInterval _watchSegmentAt;
@@ -457,6 +466,9 @@ static const CGFloat YTPageMargin = 16;
 
     /** Запись просмотра уже закрыта последним отрезком — второй раз не шлём. */
     BOOL _watchClosed;
+
+    /** Когда последний раз записали место показа в незакрытую запись. */
+    NSTimeInterval _pendingNotedAt;
 
     YTTappableView *_channelTouch;
 
@@ -3330,6 +3342,16 @@ static const CGFloat YTPageMargin = 16;
 
         NSDictionary *player = [YTApi playerResponse:videoId];
 
+        // Адреса сигналов просмотра — из этого ответа, что бы ни было дальше.
+        NSDictionary *tracking = player;
+
+        YTMain(^{
+            if ([_loadGeneration isCurrent:generation] &&
+                [YTJson objectIn:tracking key:@"playbackTracking"] != nil) {
+                _trackingJson = tracking;
+            }
+        });
+
         /**
          * Субтитры и раскадровка — из того же ответа `/player`, который
          * и так нужен ради потока: своих запросов они не требуют.
@@ -4589,6 +4611,7 @@ static NSMutableArray *YTJamItems = nil;
     _duration = 0;
     _finished = NO;
     _watchReported = NO;
+    _trackingJson = nil;
     _commentsToken = nil;
     _commentsPage = nil;
 
@@ -5567,8 +5590,9 @@ static NSMutableArray *YTJamItems = nil;
 
     NSMutableString *line = [NSMutableString stringWithFormat:
         @"запас %.2f с, скорость %.0f Кбит/с, за секунду %lld КБ, "
-        @"время %.1f с, состояние %ld, темп %.2f",
-        health, speed, delta / 1024, at, (long)[item status], [_player rate]];
+        @"время %.1f с, состояние %ld, темп %.2f, память %.0f МБ",
+        health, speed, delta / 1024, at, (long)[item status], [_player rate],
+        YTResidentMegabytes()];
 
     if (sabr != nil) {
         [line appendFormat:@", запрос №%ld, дорожки %ld/%ld",
@@ -5994,10 +6018,10 @@ static NSMutableArray *YTJamItems = nil;
              * за ролик и на своём потоке: к показу оно отношения
              * не имеет, а ждать его незачем.
              */
-            if (!_watchReported && _playerJson != nil) {
+            if (!_watchReported && [self trackingJson] != nil) {
                 _watchReported = YES;
 
-                NSDictionary *json = _playerJson;
+                NSDictionary *json = [self trackingJson];
 
                 YTAsync(^{ [YTApi reportWatched:json position:0]; });
 
@@ -6083,6 +6107,27 @@ static NSMutableArray *YTJamItems = nil;
 }
 
 - (void)tick {
+    /**
+     * Место показа — в незакрытую запись просмотра, раз в пять секунд.
+     *
+     * Если приложение снимут посреди ролика (iPad 1, нехватка памяти),
+     * при следующем запуске запись дошлётся с этим местом (YTApi,
+     * flushPendingWatch). Чаще незачем: это запись на диск.
+     */
+    NSTimeInterval clock = [NSDate timeIntervalSinceReferenceDate];
+
+    if (_watchReported && !_watchClosed && [_player rate] > 0 &&
+        clock - _pendingNotedAt >= 5.0) {
+        _pendingNotedAt = clock;
+
+        NSTimeInterval shown = CMTimeGetSeconds([_player currentTime]);
+        NSString *videoId = _videoId;
+
+        if (shown > 0 && ![[YTHlsProxy shared] isLive]) {
+            YTAsync(^{ [YTApi notePendingWatchPosition:shown video:videoId]; });
+        }
+    }
+
     /**
      * Перезавод откладываем на следующий проход цикла.
      *
@@ -6698,7 +6743,7 @@ static NSMutableArray *YTJamItems = nil;
 }
 
 - (void)reportWatchSegment {
-    if (_player == nil || _playerJson == nil || [_player rate] <= 0) {
+    if (_player == nil || [self trackingJson] == nil || [_player rate] <= 0) {
         return;
     }
 
@@ -6719,8 +6764,13 @@ static NSMutableArray *YTJamItems = nil;
 }
 
 /** Отрезок от прошлой отметки до нынешнего места показа. */
+/** Откуда брать адреса сигналов просмотра (см. `_trackingJson`). */
+- (NSDictionary *)trackingJson {
+    return _trackingJson != nil ? _trackingJson : _playerJson;
+}
+
 - (void)sendWatchSegmentFinal:(BOOL)final {
-    if (_playerJson == nil || !_watchReported || _watchClosed) {
+    if ([self trackingJson] == nil || !_watchReported || _watchClosed) {
         return;
     }
 
@@ -6741,7 +6791,7 @@ static NSMutableArray *YTJamItems = nil;
         return;
     }
 
-    NSDictionary *json = _playerJson;
+    NSDictionary *json = [self trackingJson];
     NSTimeInterval from = _watchSegmentFrom;
 
     _watchSegmentFrom = at;

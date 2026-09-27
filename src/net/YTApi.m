@@ -5044,6 +5044,16 @@ static NSString *YTBase64(NSData *data) {
     NSTimeInterval at = MAX(position, 0.0);
     BOOL opening = (from < 0);
 
+    // Запись — до сигналов: снимут посреди запроса, и она всё равно дойдёт.
+    if (!final) {
+        [self keepPendingWatch:videoId
+                      playback:playback
+                     watchtime:watchtime
+                        length:length
+                      reported:at
+                        opened:!opening];
+    }
+
     /**
      * Сигнал `playback` — только при начале показа: он открывает запись,
      * и повторять его на каждом отрезке незачем.
@@ -5092,9 +5102,188 @@ static NSString *YTBase64(NSData *data) {
         [self pingStats:url];
     }
 
+    if (final) {
+        [self forgetPendingWatch];
+    } else if (opening) {
+        [self markPendingWatchOpened:videoId];
+    }
+
     NSLog(@"[YouTube/История] %@: отрезок %.0f…%.0f с, показ на %.0f с%@",
           videoId, opening ? 0.0 : MAX(from, 0.0), at, at,
           final ? @", запись закрыта" : @"");
+}
+
+#pragma mark Незакрытая запись просмотра
+
+static NSString *const YTPendingWatchKey = @"YTPendingWatch";
+
+/** Дольше этого запись не досылаем: адреса сигналов к тому времени чужие. */
+static const NSTimeInterval YTPendingWatchLife = 6 * 3600;
+
++ (void)keepPendingWatch:(NSString *)videoId
+                playback:(NSString *)playback
+               watchtime:(NSString *)watchtime
+                  length:(NSTimeInterval)length
+                reported:(NSTimeInterval)reported
+                  opened:(BOOL)opened {
+    if ([videoId length] == 0 || [watchtime length] == 0) {
+        return;
+    }
+
+    @synchronized ([YTApi class]) {
+        NSUserDefaults *settings = [NSUserDefaults standardUserDefaults];
+        NSDictionary *old = [settings dictionaryForKey:YTPendingWatchKey];
+
+        // Открытие уже дошло раньше — не забываем об этом на следующих отрезках.
+        BOOL wasOpened = [[old objectForKey:@"videoId"] isEqualToString:videoId]
+                      && [[old objectForKey:@"opened"] boolValue];
+
+        NSMutableDictionary *record = [NSMutableDictionary dictionary];
+
+        [record setObject:videoId forKey:@"videoId"];
+        [record setObject:watchtime forKey:@"watchtime"];
+
+        if ([playback length] > 0) {
+            [record setObject:playback forKey:@"playback"];
+        }
+
+        [record setObject:[NSNumber numberWithDouble:length] forKey:@"length"];
+        [record setObject:[NSNumber numberWithDouble:reported] forKey:@"reported"];
+        [record setObject:[NSNumber numberWithDouble:reported] forKey:@"position"];
+        [record setObject:[NSNumber numberWithBool:(opened || wasOpened)] forKey:@"opened"];
+        [record setObject:([self activeAccountDatasync] ?: @"") forKey:@"channel"];
+        [record setObject:[NSNumber numberWithDouble:[NSDate timeIntervalSinceReferenceDate]]
+                   forKey:@"savedAt"];
+
+        [settings setObject:record forKey:YTPendingWatchKey];
+
+        // Сразу на диск: по памяти снимают без предупреждения и без сохранения.
+        [settings synchronize];
+    }
+}
+
++ (void)markPendingWatchOpened:(NSString *)videoId {
+    @synchronized ([YTApi class]) {
+        NSUserDefaults *settings = [NSUserDefaults standardUserDefaults];
+        NSMutableDictionary *record =
+            [[settings dictionaryForKey:YTPendingWatchKey] mutableCopy];
+
+        if (![[record objectForKey:@"videoId"] isEqualToString:videoId]) {
+            return;
+        }
+
+        [record setObject:[NSNumber numberWithBool:YES] forKey:@"opened"];
+        [settings setObject:record forKey:YTPendingWatchKey];
+        [settings synchronize];
+    }
+}
+
++ (void)forgetPendingWatch {
+    @synchronized ([YTApi class]) {
+        NSUserDefaults *settings = [NSUserDefaults standardUserDefaults];
+
+        if ([settings objectForKey:YTPendingWatchKey] != nil) {
+            [settings removeObjectForKey:YTPendingWatchKey];
+            [settings synchronize];
+        }
+    }
+}
+
++ (void)notePendingWatchPosition:(NSTimeInterval)position video:(NSString *)videoId {
+    if (!(position > 0) || [videoId length] == 0) {
+        return;
+    }
+
+    @synchronized ([YTApi class]) {
+        NSUserDefaults *settings = [NSUserDefaults standardUserDefaults];
+        NSMutableDictionary *record =
+            [[settings dictionaryForKey:YTPendingWatchKey] mutableCopy];
+
+        if (![[record objectForKey:@"videoId"] isEqualToString:videoId]) {
+            return;
+        }
+
+        [record setObject:[NSNumber numberWithDouble:position] forKey:@"position"];
+        [settings setObject:record forKey:YTPendingWatchKey];
+        [settings synchronize];
+    }
+}
+
+/**
+ * Дослать запись, которую прошлый запуск не закрыл.
+ *
+ * Так бывает на iPad 1: система снимает приложение по нехватке памяти
+ * посреди ролика, и тот не успевает попасть в историю — открывающий
+ * сигнал уходит через несколько секунд после начала показа. Досылаем
+ * с тем, что успели досмотреть: не дошло открытие — открытие и отрезок
+ * до места, дошло — последний отрезок и конец записи.
+ */
++ (void)flushPendingWatch {
+    NSDictionary *record;
+
+    @synchronized ([YTApi class]) {
+        record = [[NSUserDefaults standardUserDefaults] dictionaryForKey:YTPendingWatchKey];
+    }
+
+    if (record == nil) {
+        return;
+    }
+
+    NSString *videoId = [record objectForKey:@"videoId"];
+    NSTimeInterval age = [NSDate timeIntervalSinceReferenceDate]
+                       - [[record objectForKey:@"savedAt"] doubleValue];
+    NSString *channel = [self activeAccountDatasync] ?: @"";
+
+    BOOL signedIn = [YTAuth isSignedIn];
+    BOOL fresh = (age >= 0 && age <= YTPendingWatchLife);
+    BOOL sameChannel = [[record objectForKey:@"channel"] isEqualToString:channel];
+
+    if (!signedIn || [videoId length] == 0 || !fresh || !sameChannel) {
+        NSLog(@"[YouTube/История] Прерванную запись %@ не досылаем: %@", videoId,
+              !signedIn ? @"вход не поднят"
+                        : (!fresh ? @"слишком старая" : @"канал другой"));
+
+        [self forgetPendingWatch];
+        return;
+    }
+
+    NSTimeInterval position = MAX([[record objectForKey:@"position"] doubleValue], 1.0);
+    NSTimeInterval reported = [[record objectForKey:@"reported"] doubleValue];
+    NSTimeInterval length = [[record objectForKey:@"length"] doubleValue];
+    BOOL opened = [[record objectForKey:@"opened"] boolValue];
+
+    NSMutableDictionary *tracking = [NSMutableDictionary dictionary];
+
+    [tracking setObject:[NSDictionary dictionaryWithObject:[record objectForKey:@"watchtime"]
+                                                    forKey:@"baseUrl"]
+                 forKey:@"videostatsWatchtimeUrl"];
+
+    if ([[record objectForKey:@"playback"] length] > 0) {
+        [tracking setObject:[NSDictionary dictionaryWithObject:[record objectForKey:@"playback"]
+                                                        forKey:@"baseUrl"]
+                     forKey:@"videostatsPlaybackUrl"];
+    }
+
+    NSDictionary *details = [NSDictionary dictionaryWithObjectsAndKeys:
+        videoId, @"videoId",
+        [NSString stringWithFormat:@"%.0f", length], @"lengthSeconds", nil];
+
+    NSDictionary *json = [NSDictionary dictionaryWithObjectsAndKeys:
+        tracking, @"playbackTracking", details, @"videoDetails", nil];
+
+    NSLog(@"[YouTube/История] Досылаем запись, прерванную прошлым запуском: %@ до %.0f с%@",
+          videoId, position, opened ? @"" : @", открытие не дошло");
+
+    if (!opened) {
+        [self reportWatched:json position:position from:-1 elapsed:0 final:NO];
+        reported = position;
+    }
+
+    [self reportWatched:json
+               position:position
+                   from:reported
+                elapsed:MAX(0.0, position - reported)
+                  final:YES];
 }
 
 + (NSDictionary *)playerResponse:(NSString *)videoId {
