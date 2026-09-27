@@ -636,4 +636,10 @@ typedef enum {
 /** Продолжение любого списка по токену. */
 + (NSDictionary *)browseContinuation:(NSString *)continuation;
 
+/**
+ * Продолжение подборки — тем же клиентом, что и её первая страница
+ * (см. `playlist:`): вошедшему TV с токеном, гостю WEB.
+ */
++ (NSDictionary *)playlistContinuation:(NSString *)continuation;
+
 @end

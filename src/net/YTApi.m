@@ -4935,6 +4935,23 @@ static NSString *YTBase64(NSData *data) {
     [request setValue:YTTvUserAgent forHTTPHeaderField:@"User-Agent"];
     [request setValue:@"https://www.youtube.com/tv" forHTTPHeaderField:@"Referer"];
 
+    /**
+     * Чей это просмотр — если каналов у учётной записи несколько.
+     *
+     * Тела у сигнала нет, и `onBehalfOfUser`, которым мы называем канал
+     * во всех остальных запросах, сюда не положить. Без него сервер
+     * записывал просмотр на основной канал: на втором история не
+     * пополнялась и место не запоминалось. TV-клиент в каждом сигнале
+     * шлёт `X-YouTube-DataSync-Id` — во всех семи дампах yttv, вида
+     * «личность||», — и мы шлём то же: пару, которую сервер дал выбранному
+     * каналу в списке каналов.
+     */
+    NSString *datasync = [self activeAccountDatasync];
+
+    if ([datasync length] > 0 && [token length] > 0) {
+        [request setValue:datasync forHTTPHeaderField:@"X-YouTube-DataSync-Id"];
+    }
+
     YTHttpResponse *answer = [YTHttp send:request bodyLimit:4096];
 
     NSLog(@"[YouTube/История] Сигнал %@: код %ld",
@@ -7538,6 +7555,29 @@ static NSString *YTAccountsCacheFor = nil;
     if (thumbnail != nil) { [result setObject:thumbnail forKey:@"thumbnail"]; }
 
     return result;
+}
+
+/**
+ * Продолжение подборки — тем же, кто грузил первую страницу.
+ *
+ * Общее продолжение ходит анонимным WEB-клиентом. Для открытого плейлиста
+ * это сходит, а «Понравившиеся» (`LL`), «Смотреть позже» и закрытые
+ * подборки анонимно не отдаются вовсе: список обрывался на первой
+ * странице, после пятнадцати роликов, — и через VPN, и через WARP.
+ */
++ (NSDictionary *)playlistContinuation:(NSString *)continuation {
+    if ([continuation length] == 0) {
+        return nil;
+    }
+
+    BOOL signedIn = [YTAuth isSignedIn];
+
+    return [self feedFrom:[self post:@"browse"
+                                body:[NSDictionary dictionaryWithObject:continuation
+                                                                 forKey:@"continuation"]
+                              client:(signedIn ? @"TVHTML5" : @"WEB")
+                           authorize:signedIn
+                                 ttl:0]];
 }
 
 + (NSDictionary *)browseContinuation:(NSString *)continuation {

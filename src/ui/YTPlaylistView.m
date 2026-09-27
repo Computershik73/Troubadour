@@ -385,7 +385,7 @@ static const CGFloat YTPlCover = 185;
     NSString *token = [_pager token];
 
     YTAsync(^{
-        NSDictionary *feed = [YTApi browseContinuation:token];
+        NSDictionary *feed = [YTApi playlistContinuation:token];
 
         YTMain(^{
             [_pager finish];

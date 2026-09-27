@@ -120,7 +120,18 @@ static const CGFloat YTHistoryThumb = 90;
         if ([tile->_item isPlaylist]) {
             [YTNav openPlaylist:tile->_item.playlistId title:tile->_item.title];
         } else {
-            [YTNav openVideo:tile->_item.videoId title:tile->_item.title];
+            /**
+             * С места, где бросили, — как из лент.
+             *
+             * Здесь секунда не передавалась вовсе, и ролик из истории
+             * на странице «Вы» всегда начинался сначала, хотя сервер
+             * присылал и долю, и секунду: полоска под плиткой была,
+             * а продолжения — нет.
+             */
+            [YTNav openVideo:tile->_item.videoId
+                       title:tile->_item.title
+                    playlist:nil
+                    resumeAt:tile->_item.resumeAt];
         }
     }];
 

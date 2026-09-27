@@ -303,7 +303,62 @@ NSString *YTTileLineText(NSDictionary *line, NSInteger index) {
     return [YTJson renderedText:[YTJson objectIn:item key:@"lineItemRenderer"] key:@"text"];
 }
 
+/** «8:04», «1:13:16» → секунды; 0, если это не длительность. */
+static NSTimeInterval YTSecondsInDuration(NSString *text) {
+    NSArray *parts = [text componentsSeparatedByString:@":"];
+
+    if ([parts count] < 2 || [parts count] > 3) {
+        return 0;
+    }
+
+    NSTimeInterval total = 0;
+
+    for (NSString *part in parts) {
+        NSString *digits = [part stringByTrimmingCharactersInSet:
+            [NSCharacterSet whitespaceCharacterSet]];
+
+        if ([digits length] == 0 ||
+            [digits rangeOfCharacterFromSet:
+                [[NSCharacterSet decimalDigitCharacterSet] invertedSet]].location != NSNotFound) {
+            return 0;
+        }
+
+        total = total * 60 + [digits integerValue];
+    }
+
+    return total;
+}
+
 @implementation YTVideoItem
+
+/**
+ * Секунда продолжения — названная сервером, а если он её не назвал,
+ * то по доле просмотра.
+ *
+ * Сервер кладёт секунду в `watchEndpoint.startTimeSeconds` не у каждой
+ * плитки: замер на Android по живой истории — «доля 0,10 место 0; доля
+ * 0,10 место 0; доля 0,18 место 2037». Полоска под плиткой при этом есть,
+ * а ролик начинался сначала. Досмотренный почти до конца (от 95 %)
+ * начинается сначала, как и у самого YouTube.
+ */
+- (NSTimeInterval)resumeAt {
+    if (_resumeAt > 0) {
+        return _resumeAt;
+    }
+
+    if (self.isLive || _watchedShare <= 0 || _watchedShare >= 0.95) {
+        return 0;
+    }
+
+    NSTimeInterval length = YTSecondsInDuration(self.duration);
+
+    if (length <= 0) {
+        return 0;
+    }
+
+    // Пара секунд назад — чтобы не начать с полуслова.
+    return MAX(0.0, floor(length * _watchedShare) - 2.0);
+}
 
 /**
  * Доля просмотра по умолчанию — минус один, «сервер не сказал».

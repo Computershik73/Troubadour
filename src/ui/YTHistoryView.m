@@ -137,7 +137,12 @@ static const CGFloat YTHiDayHeight = 18 + 10;
             return;
         }
 
-        [YTNav openVideo:card->_item.videoId title:card->_item.title];
+        // С места, где бросили: полная история — главное место, откуда
+        // к брошенному ролику возвращаются (см. YTMeView).
+        [YTNav openVideo:card->_item.videoId
+                   title:card->_item.title
+                playlist:nil
+                resumeAt:card->_item.resumeAt];
     }];
 
     return self;
