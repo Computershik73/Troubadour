@@ -4954,8 +4954,9 @@ static NSString *YTBase64(NSData *data) {
 
     YTHttpResponse *answer = [YTHttp send:request bodyLimit:4096];
 
-    NSLog(@"[YouTube/История] Сигнал %@: код %ld",
-          [[NSURL URLWithString:url] path], (long)[answer statusCode]);
+    NSLog(@"[YouTube/История] Сигнал %@: код %ld, канал %@",
+          [[NSURL URLWithString:url] path], (long)[answer statusCode],
+          [request valueForHTTPHeaderField:@"X-YouTube-DataSync-Id"] ?: @"по умолчанию");
 }
 
 + (void)reportWatched:(NSDictionary *)playerResponse

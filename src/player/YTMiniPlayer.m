@@ -67,6 +67,11 @@ static const CGFloat YTMiniMaxWidth = 360;
 
 static YTMiniRules *YTMiniGuard = nil;
 
+/** Что страница свёрнутого ролика умеет услышать при закрытии окна. */
+@protocol YTMiniOwnerClosing <NSObject>
+- (void)miniPlayerWillClose;
+@end
+
 static UIView *YTMiniHost = nil;
 static UIView *YTMiniVideo = nil;
 static AVPlayer *YTMiniAVPlayer = nil;
@@ -529,6 +534,16 @@ static BOOL YTMiniMoved = NO;
 }
 
 + (void)close {
+    /**
+     * Странице — что просмотр кончился: запись о нём закрывается
+     * последним отрезком. Без этого ролик, закрытый из окна, уходил
+     * в историю одной отметкой «0…0 с», а просмотренное после неё
+     * не доходило до сервера вовсе (журнал 27.09.2026).
+     */
+    if ([YTMiniOwner respondsToSelector:@selector(miniPlayerWillClose)]) {
+        [(id<YTMiniOwnerClosing>)YTMiniOwner miniPlayerWillClose];
+    }
+
     [YTMiniAVPlayer pause];
 
     /**

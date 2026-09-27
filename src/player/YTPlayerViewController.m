@@ -455,6 +455,9 @@ static const CGFloat YTPageMargin = 16;
     NSInteger _watchPings;
     NSTimer *_watchTimer;
 
+    /** Запись просмотра уже закрыта последним отрезком — второй раз не шлём. */
+    BOOL _watchClosed;
+
     YTTappableView *_channelTouch;
 
     /** Название — кнопка описания, и само описание при нём. */
@@ -6685,6 +6688,7 @@ static NSMutableArray *YTJamItems = nil;
     _watchSegmentFrom = 0;
     _watchSegmentAt = [NSDate timeIntervalSinceReferenceDate];
     _watchPings = 0;
+    _watchClosed = NO;
 
     _watchTimer = [NSTimer scheduledTimerWithTimeInterval:10.0
                                                    target:self
@@ -6716,8 +6720,12 @@ static NSMutableArray *YTJamItems = nil;
 
 /** Отрезок от прошлой отметки до нынешнего места показа. */
 - (void)sendWatchSegmentFinal:(BOOL)final {
-    if (_playerJson == nil || !_watchReported) {
+    if (_playerJson == nil || !_watchReported || _watchClosed) {
         return;
+    }
+
+    if (final) {
+        _watchClosed = YES;
     }
 
     NSTimeInterval at = CMTimeGetSeconds([_player currentTime]);
@@ -6742,6 +6750,11 @@ static NSMutableArray *YTJamItems = nil;
     YTAsync(^{
         [YTApi reportWatched:json position:at from:from elapsed:spent final:final];
     });
+}
+
+/** Мини-окно закрывают — запись просмотра закрываем тоже (см. YTMiniPlayer). */
+- (void)miniPlayerWillClose {
+    [self stopWatchReports:_watchReported];
 }
 
 /** Запись закрываем: ролик доигран или мы уходим с него. */
