@@ -141,7 +141,18 @@ static CGFloat YTMaxDecodeWidth(void) {
         cache = [[NSCache alloc] init];
 
         unsigned long long memory = [[NSProcessInfo processInfo] physicalMemory];
-        NSUInteger limit = (NSUInteger)(memory / (YTSmallMemory() ? 32 : 12));
+
+        /**
+         * На iPad 1 (256 МБ на всё) — четыре мегабайта, а не восемь.
+         *
+         * Систему там снимает приложение на 80–95 МБ, и каждый мегабайт,
+         * который можно взять заново с диска, лучше не держать: превью
+         * и так лежат в кеше кадров на диске.
+         */
+        unsigned long long divisor = memory < 300ULL * 1024 * 1024
+            ? 64 : (YTSmallMemory() ? 32 : 12);
+
+        NSUInteger limit = (NSUInteger)(memory / divisor);
 
         // NSCache считает не память процесса, а нашу же оценку в байтах,
         // поэтому доля берётся от физической памяти устройства, а не от кучи:

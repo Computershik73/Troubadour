@@ -6012,6 +6012,9 @@ static NSMutableArray *YTJamItems = nil;
         }
 
         if (status == AVPlayerItemStatusReadyToPlay) {
+            // Адрес расшифрован и играет — решатель своё отработал.
+            [[YTNSig shared] streamStarted];
+
             /**
              * Плеер готов — значит, и перемотка, назначенная при смене
              * качества, уже состоялась или вот-вот состоится. Дальше

@@ -198,6 +198,31 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
           YTResidentMegabytes());
 }
 
+- (void)streamStarted {
+    @synchronized (self) {
+        _busyUntil = 0;
+    }
+
+    if (!YTTightMemory()) {
+        return;
+    }
+
+    YTMain(^{
+        if (_web == nil) {
+            return;
+        }
+
+        NSLog(@"[YouTube/Ключ] Ролик пошёл — решатель больше не нужен, с памятью тесно");
+
+        [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                                 selector:@selector(releaseHeavy)
+                                                   object:nil];
+
+        // Пара секунд — на расшифровку, если она ещё не дошла до конца.
+        [self performSelector:@selector(releaseHeavy) withObject:nil afterDelay:2.0];
+    });
+}
+
 #pragma mark Подготовка
 
 - (void)prepare {
