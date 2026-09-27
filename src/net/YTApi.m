@@ -4950,13 +4950,34 @@ static NSString *YTBase64(NSData *data) {
 
     if ([datasync length] > 0 && [token length] > 0) {
         [request setValue:datasync forHTTPHeaderField:@"X-YouTube-DataSync-Id"];
+
+        /**
+         * У профиля — ещё и `X-Goog-PageId` с ним самим.
+         *
+         * Одной пары было мало: с ней история второго канала так и не
+         * пополнялась. Дамп yttv8, снятый на втором канале, показал
+         * разницу — в каждом сигнале рядом с парой
+         * «PROFILE_ID||OWNER_ID» стоит
+         * `X-Goog-PageId: PROFILE_ID`, первая её половина.
+         * У основного канала пара вида «владелец||», и этого заголовка
+         * TV-клиент не шлёт ни в одном из семи прежних дампов — не шлём
+         * и мы.
+         */
+        NSRange bar = [datasync rangeOfString:@"||"];
+
+        if (bar.location != NSNotFound && bar.location > 0 &&
+            NSMaxRange(bar) < [datasync length]) {
+            [request setValue:[datasync substringToIndex:bar.location]
+           forHTTPHeaderField:@"X-Goog-PageId"];
+        }
     }
 
     YTHttpResponse *answer = [YTHttp send:request bodyLimit:4096];
 
-    NSLog(@"[YouTube/История] Сигнал %@: код %ld, канал %@",
+    NSLog(@"[YouTube/История] Сигнал %@: код %ld, канал %@%@",
           [[NSURL URLWithString:url] path], (long)[answer statusCode],
-          [request valueForHTTPHeaderField:@"X-YouTube-DataSync-Id"] ?: @"по умолчанию");
+          [request valueForHTTPHeaderField:@"X-YouTube-DataSync-Id"] ?: @"по умолчанию",
+          [request valueForHTTPHeaderField:@"X-Goog-PageId"] != nil ? @", профиль" : @"");
 }
 
 + (void)reportWatched:(NSDictionary *)playerResponse
