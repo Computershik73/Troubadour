@@ -91,7 +91,21 @@ static NSString *YTNSigBase64(NSData *data) {
      * releaseHeavy) ради уже известного ответа поднимать его незачем.
      */
     NSMutableDictionary *_answers;
+
+    /**
+     * До какого мига решатель нужен — выгружать его раньше нельзя.
+     *
+     * Подъём решателя сам по себе тянет память, и на iPad 1 просьба
+     * системы приходит сразу за ним. Выгрузка по ней уносила решатель
+     * за миг до расшифровки: журнал 27.09.2026 — «готово» в 12:31:57.27,
+     * выгружен в 12:31:57.38, «`n` не расшифрован» в 12:31:57.42, отказ
+     * 403 и готовые адреса вместо подачи.
+     */
+    NSTimeInterval _busyUntil;
 }
+
+/** Сколько решатель считается нужным после подъёма и после расшифровки. */
+static const NSTimeInterval YTNSigBusySpan = 20.0;
 
 + (YTNSig *)shared {
     static YTNSig *shared = nil;
@@ -135,6 +149,25 @@ static NSString *YTNSigBase64(NSData *data) {
         return;
     }
 
+    NSTimeInterval wait;
+
+    @synchronized (self) {
+        wait = _busyUntil - [NSDate timeIntervalSinceReferenceDate];
+    }
+
+    if (wait > 0) {
+        NSLog(@"[YouTube/Ключ] Памяти мало, но решатель нужен прямо сейчас — выгрузим через %.0f с",
+              wait);
+
+        [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                                 selector:@selector(releaseHeavy)
+                                                   object:nil];
+
+        [self performSelector:@selector(releaseHeavy) withObject:nil afterDelay:wait + 0.5];
+
+        return;
+    }
+
     @synchronized (self) {
         if (_pending) {
             return;
@@ -174,6 +207,13 @@ static NSString *YTNSigBase64(NSData *data) {
 - (void)prepareForced:(BOOL)force {
     @synchronized (self) {
         if (_started && !force) {
+            // Уже поднят или поднимается — зовут, значит, скоро понадобится.
+            NSTimeInterval soon = [NSDate timeIntervalSinceReferenceDate] + YTNSigBusySpan;
+
+            if (_ready && _busyUntil < soon) {
+                _busyUntil = soon;
+            }
+
             return;
         }
 
@@ -448,6 +488,7 @@ static NSString *YTNSigBase64(NSData *data) {
 
     @synchronized (self) {
         _ready = YES;
+        _busyUntil = [NSDate timeIntervalSinceReferenceDate] + YTNSigBusySpan;
     }
 
     [self finish:player line:[NSString stringWithFormat:
@@ -560,7 +601,32 @@ static NSString *YTNSigBase64(NSData *data) {
         return nil;
     }
 
+    @synchronized (self) {
+        _busyUntil = [NSDate timeIntervalSinceReferenceDate] + YTNSigBusySpan;
+    }
+
     NSString *result = [self evaluate:n];
+
+    /**
+     * Выгрузили между «готово» и расшифровкой — поднимаем ещё раз
+     * и пробуем снова. Один раз: второй подряд — уже не случайность.
+     */
+    if ([result length] == 0 && ![self isReady] && ![NSThread isMainThread]) {
+        NSLog(@"[YouTube/Ключ] Решатель выгрузили посреди расшифровки — поднимаем снова");
+
+        [self prepareForced:NO];
+
+        dispatch_group_wait(_settled,
+            dispatch_time(DISPATCH_TIME_NOW, (int64_t)(YTNSigReadyWait() * NSEC_PER_SEC)));
+
+        if ([self isReady]) {
+            @synchronized (self) {
+                _busyUntil = [NSDate timeIntervalSinceReferenceDate] + YTNSigBusySpan;
+            }
+
+            result = [self evaluate:n];
+        }
+    }
 
     if ([result length] > 0 && [player length] > 0) {
         @synchronized (self) {
