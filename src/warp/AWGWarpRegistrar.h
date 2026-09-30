@@ -30,6 +30,7 @@ extern NSString * const kAWGWarpErrorDomain;
 // bypass clients keep in warp_verified_seeds.json — a tunnel you can bring up
 // on a network where nothing else gets out. Shared between everyone running
 // this build, so it is a fallback, not the normal path.
+// Troubadour: nil, если сборка без ключа (нет AWGSecrets.h).
 + (AWGConfig *)bundledSeedConfig;
 
 // A random Cloudflare anycast endpoint from the public WARP ranges, as

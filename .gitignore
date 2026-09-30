@@ -2,3 +2,11 @@
 packages/
 *.dSYM/
 .DS_Store
+
+# Ключи WARP — только локально; образцы лежат рядом (*.example.*)
+src/warp/AWGSecrets.h
+Resources/warp_bootstrap.json
+Resources/warp_verified_seeds.json
+
+# Ранние заметки порта — только локально
+NOTES.md

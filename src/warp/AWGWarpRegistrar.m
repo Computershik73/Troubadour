@@ -11,6 +11,13 @@
 #import "AmneziaWGManager.h"
 #import "DebugLog.h"
 
+// Troubadour: ключ запасной личности — не в исходниках (см. AWGSecrets.example.h).
+#if __has_include("AWGSecrets.h")
+#import "AWGSecrets.h"
+#else
+#import "AWGSecrets.example.h"
+#endif
+
 #include <unistd.h>
 
 NSString * const kAWGWarpErrorDomain = @"AWGWarpRegistrar";
@@ -165,10 +172,15 @@ static NSString *hexSignature(NSData *data) {
 #pragma mark - Bundled seed
 
 + (AWGConfig *)bundledSeedConfig {
+    if ([AWG_BUNDLED_PRIVATE_KEY length] == 0) {
+        DLog(@"[AWG] вшитого ключа нет — сборка без AWGSecrets.h");
+        return nil;
+    }
+
     AWGConfig *c = [AWGConfig configWithDefaults];
     c.label = @"WARP (вшитый резерв)";
-    c.privateKey    = @"<base64 WARP private key>";
-    c.peerPublicKey = @"bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=";
+    c.privateKey    = AWG_BUNDLED_PRIVATE_KEY;
+    c.peerPublicKey = AWG_BUNDLED_PEER_PUBLIC_KEY;
     c.warpClientID  = @"AEOY";
     c.ipv4Address   = @"172.16.0.2/32";
     c.ipv6Address   = @"2606:4700:110:8d95:a92:92b6:b54a:d22f/128";

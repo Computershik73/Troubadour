@@ -387,6 +387,10 @@ static NSString * const kAWGEnabledKey   = @"awg_enabled_key";
                 return;
             }
             config = [AWGWarpRegistrar bundledSeedConfig];
+            if (config == nil) {
+                if (completion) completion(NO, error.localizedDescription);
+                return;
+            }
             strongSelf.lastError = nil;
         } else {
             NSString *proven = strongSelf.provenEndpoint;
@@ -414,6 +418,10 @@ static NSString * const kAWGEnabledKey   = @"awg_enabled_key";
 
 - (void)useBundledSeedWithCompletion:(void(^)(BOOL, NSString *))completion {
     AWGConfig *seed = [AWGWarpRegistrar bundledSeedConfig];
+    if (seed == nil) {
+        if (completion) completion(NO, @"В сборке нет ключа WARP");
+        return;
+    }
     [self addConfig:seed];
     [self selectConfigAtIndex:self.savedConfigs.count - 1];
     DLog(@"[AWG] using bundled seed: %@ via %@", seed.ipv4Address, seed.peerEndpoint);

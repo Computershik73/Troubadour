@@ -1,0 +1,8 @@
+{
+  "private_key": "<base64 WARP private key>",
+  "public_key": "<base64 WARP public key>",
+  "ipv4": "172.16.0.2",
+  "ipv6": "<IPv6 из регистрации WARP>",
+  "peer_pub": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+  "peer_endpoint": "162.159.195.9:500"
+}
