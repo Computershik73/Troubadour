@@ -850,6 +850,7 @@ static const CGFloat YTPageMargin = 16;
 
     _adopted = NO;
 
+    float rate = [YTMiniPlayer playbackRate];
     AVPlayer *player = [YTMiniPlayer adoptPlayer];
     AVPlayerLayer *layer = [YTMiniPlayer adoptLayer];
 
@@ -858,6 +859,7 @@ static const CGFloat YTPageMargin = 16;
     }
 
     _player = player;
+    _rate = rate;
     _playerLayer = layer;
     _playingAdopted = YES;
 
@@ -4010,6 +4012,7 @@ static const CGFloat YTPageMargin = 16;
 
     [YTMiniPlayer showWithPlayer:_player
                            layer:_playerLayer
+                            rate:_rate
                          videoId:_videoId
                            title:[_title text]
                            owner:self];
@@ -7023,6 +7026,7 @@ static NSMutableArray *YTJamItems = nil;
 
         [YTMiniPlayer showWithPlayer:_player
                                layer:_playerLayer
+                                rate:_rate
                              videoId:_videoId
                                title:[_title text]
                                owner:self];
@@ -7345,22 +7349,12 @@ static NSMutableArray *YTJamItems = nil;
     }
 
     if (_menuPage == 2) {
-        /**
-         * Только обычная скорость и ниже.
-         *
-         * Ускорение `AVPlayer` по нашей подаче не принимает: поток идёт
-         * через прокси как HLS, и элемент объявляет `canPlayFastForward`
-         * равным `NO`. Причём не просто не разгоняется, а **встаёт** —
-         * `setRate:` выбирает ближайшее, что умеет, и ближайшим
-         * оказывается ноль. Пункт, который останавливает ролик, хуже
-         * отсутствующего, поэтому его в списке и нет.
-         *
-         * Замедление при этом работает, оттого список и обрывается
-         * на единице, а не исчезает целиком.
-         */
+        // canPlayFastForward describes rates above 2x, not ordinary speed changes
         NSArray *rates = [NSArray arrayWithObjects:
             [NSNumber numberWithFloat:0.25f], [NSNumber numberWithFloat:0.5f],
-            [NSNumber numberWithFloat:0.75f], [NSNumber numberWithFloat:1.0f], nil];
+            [NSNumber numberWithFloat:0.75f], [NSNumber numberWithFloat:1.0f],
+            [NSNumber numberWithFloat:1.25f], [NSNumber numberWithFloat:1.5f],
+            [NSNumber numberWithFloat:1.75f], [NSNumber numberWithFloat:2.0f], nil];
 
         for (NSNumber *number in rates) {
             float rate = [number floatValue];
@@ -7693,6 +7687,7 @@ static NSMutableArray *YTJamItems = nil;
      */
     if ([_player rate] > 0) {
         [_player setRate:rate];
+        [YTNowPlaying refreshWithPlayer:_player duration:_duration];
 
         /**
          * Проверяем, удержал ли плеер заданный ход.

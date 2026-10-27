@@ -75,6 +75,7 @@ static YTMiniRules *YTMiniGuard = nil;
 static UIView *YTMiniHost = nil;
 static UIView *YTMiniVideo = nil;
 static AVPlayer *YTMiniAVPlayer = nil;
+static float YTMiniRate = 1.0f;
 static AVPlayerLayer *YTMiniLayer = nil;
 static UIButton *YTMiniClose = nil;
 static UIButton *YTMiniPlayPause = nil;
@@ -256,8 +257,13 @@ static BOOL YTMiniMoved = NO;
     return YTMiniOwner;
 }
 
++ (float)playbackRate {
+    return YTMiniRate;
+}
+
 + (void)showWithPlayer:(AVPlayer *)player
                  layer:(AVPlayerLayer *)layer
+                  rate:(float)rate
                videoId:(NSString *)videoId
                  title:(NSString *)title
                  owner:(UIViewController *)owner {
@@ -268,6 +274,8 @@ static BOOL YTMiniMoved = NO;
     [self build];
 
     YTMiniAVPlayer = player;
+    // a paused player reports zero, so keep the owner's chosen rate separately
+    YTMiniRate = rate;
     YTMiniLayer = layer;
     YTMiniVideoId = [videoId copy];
     YTMiniTitleText = [title copy];
@@ -454,7 +462,7 @@ static BOOL YTMiniMoved = NO;
     if ([YTMiniAVPlayer rate] > 0) {
         [YTMiniAVPlayer pause];
     } else {
-        [YTMiniAVPlayer play];
+        [YTMiniAVPlayer setRate:YTMiniRate];
     }
 
     [self refreshPlayIcon];
@@ -509,6 +517,7 @@ static BOOL YTMiniMoved = NO;
     AVPlayer *player = YTMiniAVPlayer;
 
     YTMiniAVPlayer = nil;
+    YTMiniRate = 1.0f;
     YTMiniVideoId = nil;
     YTMiniOwner = nil;
 
@@ -560,6 +569,7 @@ static BOOL YTMiniMoved = NO;
     [YTMiniHost removeFromSuperview];
 
     YTMiniAVPlayer = nil;
+    YTMiniRate = 1.0f;
     YTMiniLayer = nil;
     YTMiniVideoId = nil;
     YTMiniTitleText = nil;

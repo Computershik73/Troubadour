@@ -1428,11 +1428,11 @@ static const CGFloat YTShortGap = 14;
     }
 
     if (_settingsPage == 2) {
-        // Только обычная скорость и ниже — по той же причине, что
-        // на странице ролика: ускорение поток не принимает и встаёт.
         NSArray *rates = [NSArray arrayWithObjects:
             [NSNumber numberWithFloat:0.25f], [NSNumber numberWithFloat:0.5f],
-            [NSNumber numberWithFloat:0.75f], [NSNumber numberWithFloat:1.0f], nil];
+            [NSNumber numberWithFloat:0.75f], [NSNumber numberWithFloat:1.0f],
+            [NSNumber numberWithFloat:1.25f], [NSNumber numberWithFloat:1.5f],
+            [NSNumber numberWithFloat:1.75f], [NSNumber numberWithFloat:2.0f], nil];
 
         for (NSNumber *number in rates) {
             float rate = [number floatValue];

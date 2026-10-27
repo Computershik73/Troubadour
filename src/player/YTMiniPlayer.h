@@ -32,6 +32,7 @@
  */
 + (void)showWithPlayer:(AVPlayer *)player
                  layer:(AVPlayerLayer *)layer
+                  rate:(float)rate
                videoId:(NSString *)videoId
                  title:(NSString *)title
                  owner:(UIViewController *)owner;
@@ -45,6 +46,8 @@
  * терялся — о нём знала только прежняя страница.
  */
 + (UIViewController *)owner;
+
++ (float)playbackRate;
 
 /**
  * Отдаёт плеер обратно странице и прячет окно, ничего не останавливая.
