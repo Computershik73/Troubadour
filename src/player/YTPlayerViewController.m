@@ -5124,11 +5124,7 @@ static NSMutableArray *YTJamItems = nil;
         }
     }
 
-    if (_rate > 0 && _rate != 1.0f) {
-        [_player setRate:_rate];
-    } else {
-        [_player play];
-    }
+    [self playAtChosenRate];
 
     [self startStallWatch];
     [self showNowPlaying];
@@ -5412,11 +5408,7 @@ static NSMutableArray *YTJamItems = nil;
           seconds * 1000.0, finished ? @"дошла" : @"перебита");
 
     if (_seekWasPlaying) {
-        if (_rate > 0 && _rate != 1.0f) {
-            [_player setRate:_rate];
-        } else {
-            [_player play];
-        }
+        [self playAtChosenRate];
     } else {
         [_busy stop];
     }
@@ -6059,6 +6051,20 @@ static NSMutableArray *YTJamItems = nil;
         if (status == AVPlayerItemStatusReadyToPlay) {
             // Адрес расшифрован и играет — решатель своё отработал.
             [[YTNSig shared] streamStarted];
+
+            /**
+             * Ускорение, выбранное до этого элемента, — когда он скажет,
+             * умеет ли. Пускали его обычной скоростью (playAtChosenRate):
+             * до готовности ответ всегда «нет», а `canPlayFastForward`
+             * может прийти и чуть позже самой готовности.
+             */
+            if (_rate > 1.0f) {
+                [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                                         selector:@selector(applyFastRate)
+                                                           object:nil];
+
+                [self performSelector:@selector(applyFastRate) withObject:nil afterDelay:1.5];
+            }
 
             /**
              * Плеер готов — значит, и перемотка, назначенная при смене
@@ -7346,21 +7352,33 @@ static NSMutableArray *YTJamItems = nil;
 
     if (_menuPage == 2) {
         /**
-         * Только обычная скорость и ниже.
+         * Быстрее единицы — когда элемент сам говорит, что умеет.
          *
-         * Ускорение `AVPlayer` по нашей подаче не принимает: поток идёт
-         * через прокси как HLS, и элемент объявляет `canPlayFastForward`
-         * равным `NO`. Причём не просто не разгоняется, а **встаёт** —
-         * `setRate:` выбирает ближайшее, что умеет, и ближайшим
-         * оказывается ноль. Пункт, который останавливает ролик, хуже
-         * отсутствующего, поэтому его в списке и нет.
+         * Прежде список обрывался на единице. Элемент объявлял
+         * `canPlayFastForward` равным `NO`, и `setRate:` выше единицы
+         * ролик не разгонял, а **останавливал**: ближайшим, что плеер
+         * умел, оказывался ноль. Причиной были куски без точек входа —
+         * их с тех пор помечает упаковщик (`random_access_indicator`,
+         * см. YTTsMuxer.m), а меню так и осталось урезанным. На iPad
+         * пятого поколения под iPadOS 16 1.25× и 1.5× играют ровно
+         * (issue #4 на GitHub).
          *
-         * Замедление при этом работает, оттого список и обрывается
-         * на единице, а не исчезает целиком.
+         * Везде это не проверено — на armv7 и iOS 5 не пробовал никто.
+         * Поэтому решает не список, а элемент: нет у него
+         * `canPlayFastForward` — быстрых пунктов нет, а вместо них
+         * пояснение. Не удержал выбранное — `checkRate` вернёт единицу.
          */
-        NSArray *rates = [NSArray arrayWithObjects:
+        NSMutableArray *rates = [NSMutableArray arrayWithObjects:
             [NSNumber numberWithFloat:0.25f], [NSNumber numberWithFloat:0.5f],
             [NSNumber numberWithFloat:0.75f], [NSNumber numberWithFloat:1.0f], nil];
+
+        BOOL faster = [self canPlayFaster];
+
+        if (faster) {
+            [rates addObjectsFromArray:[NSArray arrayWithObjects:
+                [NSNumber numberWithFloat:1.25f], [NSNumber numberWithFloat:1.5f],
+                [NSNumber numberWithFloat:1.75f], [NSNumber numberWithFloat:2.0f], nil]];
+        }
 
         for (NSNumber *number in rates) {
             float rate = [number floatValue];
@@ -7368,6 +7386,13 @@ static NSMutableArray *YTJamItems = nil;
             [options addObject:[YTSheetRow choice:[self titleForRate:rate]
                                            picked:(rate == _rate)
                                            action:^{ [weakSelf pickRate:rate]; }]];
+        }
+
+        // Пояснение — только о готовом элементе: до готовности он отвечает «нет» всегда.
+        if (!faster && ![[YTHlsProxy shared] isLive] &&
+            [[_player currentItem] status] == AVPlayerItemStatusReadyToPlay) {
+            [options addObject:[YTSheetRow choice:YTLoc(@"Быстрее 1× этот поток не идёт")
+                                           picked:NO action:nil]];
         }
     }
 
@@ -7669,12 +7694,63 @@ static NSMutableArray *YTJamItems = nil;
 - (void)resumeAtChosenRate {
     _meantToPlay = YES;
 
-    if (_rate > 0 && _rate != 1.0f) {
+    [self playAtChosenRate];
+}
+
+/**
+ * Пуск с выбранной скоростью, но выше единицы — только там, где плеер
+ * её берёт (см. canPlayFaster).
+ *
+ * Иначе пускаем обычной, а выбор не трогаем: элемент, который ещё не
+ * готов, отвечает `canPlayFastForward = NO` всегда, и когда он
+ * поднимется, скорость поставит обработчик готовности.
+ */
+- (void)playAtChosenRate {
+    if (_rate > 0 && _rate != 1.0f && (_rate < 1.0f || [self canPlayFaster])) {
         [_player setRate:_rate];
         return;
     }
 
     [_player play];
+}
+
+/** Отложенное ускорение после готовности элемента (см. обработчик статуса). */
+- (void)applyFastRate {
+    if (_player == nil || _rate <= 1.0f) {
+        return;
+    }
+
+    if ([self canPlayFaster]) {
+        // Идёт — разгоняем; на паузе скорость поставит следующий пуск.
+        if ([_player rate] > 0) {
+            [_player setRate:_rate];
+        }
+
+        return;
+    }
+
+    NSLog(@"[YouTube/Плеер] Этот поток быстрее 1× не идёт "
+          @"(canPlayFastForward = NO) — играем 1×");
+
+    _rate = 1.0f;
+
+    [self showNotice:YTLoc(@"Быстрее 1× этот поток не идёт")];
+}
+
+/**
+ * Можно ли быстрее единицы.
+ *
+ * Решает сам элемент — `canPlayFastForward`. У эфира ускорять некуда:
+ * впереди только живой край, и ход быстрее обычного упрётся в него.
+ */
+- (BOOL)canPlayFaster {
+    AVPlayerItem *item = [_player currentItem];
+
+    if (item == nil || [[YTHlsProxy shared] isLive]) {
+        return NO;
+    }
+
+    return [item canPlayFastForward];
 }
 
 
@@ -7692,6 +7768,9 @@ static NSMutableArray *YTJamItems = nil;
      * на пункт меню, а не на «играть».
      */
     if ([_player rate] > 0) {
+        // Ролик идёт — значит, человек смотрит; пауза после выбора снимет это сама.
+        _meantToPlay = YES;
+
         [_player setRate:rate];
 
         /**
@@ -7716,6 +7795,22 @@ static NSMutableArray *YTJamItems = nil;
     if (now == 0) {
         NSLog(@"[YouTube/Плеер] Через 2 с после смены скорости плеер стоит "
               @"(заказано %.2f)", _rate);
+
+        /**
+         * Встал на ускорении — тот самый старый отказ: ход выше единицы
+         * плеер свёл к нулю. Пауза человека сняла бы `_meantToPlay`,
+         * так что это не она; пустой запас — это подгрузка, тоже не она.
+         * Возвращаем обычную скорость и говорим об этом.
+         */
+        if (_rate > 1.0f && _meantToPlay && !_finished &&
+            ![[_player currentItem] isPlaybackBufferEmpty]) {
+            _rate = 1.0f;
+
+            [_player play];
+            [self showNotice:YTLoc(@"Быстрее 1× этот поток не идёт")];
+
+            NSLog(@"[YouTube/Плеер] Ускорение не взялось — вернули 1×");
+        }
 
         return;
     }

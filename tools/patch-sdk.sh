@@ -21,6 +21,12 @@
 #      в libsystem_platform, ld при двухуровневом пространстве имён пропишет
 #      источником libsystem_platform.dylib — а его на iOS 5.1 ещё нет.
 #
+#      Туда же — strncmp, strcmp, strchr и bcmp: они потеряны так же. strncmp
+#      нужен YTWarpSystemVPN и +[DanteNetworkProbe networkKey], и без него
+#      линковка встаёт на обеих архитектурах. В рабочем SDK автора этот блок
+#      был дописан руками, а в скрипт не попал, поэтому на свежей установке
+#      сборка падала (issue #4 на GitHub).
+#
 #   3. В libunwind.tbd есть только SjLj-варианты раскрутки стека (их использует
 #      armv7) и нет обычных DWARF (их использует arm64). Всплывает на первом же
 #      @synchronized или @try: там компилятор ставит вызов _Unwind_Resume.
@@ -133,7 +139,8 @@ fi
 
 ensure "$SDK/usr/lib/system/libsystem_c.tbd" \
 	memset memcpy memmove memcmp memchr bzero \
-	memset_pattern4 memset_pattern8 memset_pattern16
+	memset_pattern4 memset_pattern8 memset_pattern16 \
+	strncmp strcmp strchr bcmp
 
 # --- 3. Раскрутка стека ------------------------------------------------------
 

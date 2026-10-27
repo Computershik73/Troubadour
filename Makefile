@@ -49,6 +49,14 @@ Troubadour_CFLAGS += -DYT_NO_LOG
 endif
 Troubadour_CFLAGS += -Wno-unused-variable -fvisibility=hidden
 
+# В готовой сборке счётчики, нужные только журналу, присваиваются и больше
+# нигде не читаются. clang 13 и новее ругается на это в -Wall
+# (-Wunused-but-set-variable), и с -Werror сборка встаёт: canReply/canEdit
+# и saved в YTApi.m, added в YTPlayerViewController.m (issue #4 на GitHub).
+# clang 11 из нынешнего набора Theos такого ключа не знает — для него
+# -Wno-unknown-warning-option, и стоять он должен раньше.
+Troubadour_CFLAGS += -Wno-unknown-warning-option -Wno-unused-but-set-variable
+
 # Отладочная сборка без проверки сертификатов:
 #
 #     make package INSECURE_TLS=1
