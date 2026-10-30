@@ -160,6 +160,34 @@ static YTJSValueRef YTJSConsoleLog(YTJSContextRef context, YTJSObjectRef functio
     return JSC.makeUndefined(context);
 }
 
+/**
+ * Отпускает контекст так, чтобы память и правда вернулась.
+ *
+ * Сам по себе `JSGlobalContextRelease` кучу сразу не чистит. Приложение
+ * не связано с JavaScriptCore при сборке, а таким движок старых версий
+ * (по исходникам WebKit тех лет) отдаёт общую на процесс кучу, и
+ * освобождение контекста лишь заводит сборку мусора «вскоре», по таймеру
+ * потока, — а поток движка к этому времени уже закрыт. В журнале
+ * 30.10.2026 так и выглядело: неудачная попытка без веб-вида и запасной
+ * веб-вид разом, 96 МБ и просьба системы.
+ *
+ * Поэтому до освобождения глобальные имена обнуляются (через них
+ * держится всё, что построил плеер), и мусор собирается сразу.
+ */
+static void YTJSDiscard(YTJSGlobalContextRef context) {
+    YTJSStringRef wipe = YTJSString(
+        @"(function (g) { var names = [], k, i; for (k in g) { names.push(k); }"
+        @" for (i = 0; i < names.length; i++) {"
+        @" try { g[names[i]] = null; } catch (e) {} try { delete g[names[i]]; } catch (e) {} }"
+        @"})(this);");
+
+    JSC.evaluate(context, wipe, NULL, NULL, 1, NULL);
+    JSC.stringRelease(wipe);
+
+    JSC.collect(context);
+    JSC.contextRelease(context);
+}
+
 /** Поток движка: цикл выполнения, пока не отменят. */
 @interface YTJSThread : NSThread
 @end
@@ -243,7 +271,7 @@ static YTJSValueRef YTJSConsoleLog(YTJSContextRef context, YTJSObjectRef functio
 
     if (context != NULL) {
         if ([NSThread currentThread] == _thread) {
-            JSC.contextRelease(context);
+            YTJSDiscard(context);
         } else {
             [YTJSEngine performSelector:@selector(releaseContext:)
                                onThread:_thread
@@ -262,7 +290,7 @@ static YTJSValueRef YTJSConsoleLog(YTJSContextRef context, YTJSObjectRef functio
 }
 
 + (void)releaseContext:(NSValue *)context {
-    JSC.contextRelease((YTJSGlobalContextRef)[context pointerValue]);
+    YTJSDiscard((YTJSGlobalContextRef)[context pointerValue]);
 }
 
 + (void)wake {

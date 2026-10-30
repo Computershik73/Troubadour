@@ -435,16 +435,45 @@
     return YES;
 }
 
-/** Жив ли слушающий сокет: закрытый описатель отвечает ошибкой. */
+/**
+ * Жив ли слушающий сокет: закрытый описатель отвечает ошибкой.
+ *
+ * `SO_ACCEPTCONN` знают не все версии iOS: в журнале 30.10.2026 на него
+ * пришло «Protocol not available», и прокси на каждом новом ролике
+ * закрывал и поднимал заново живой слушатель. Тогда сверяем по-другому:
+ * описатель — потоковый сокет, привязанный к нашему порту. Закрытый
+ * описатель ответит ошибкой, а номер, ушедший чужому сокету, — чужим
+ * портом или типом.
+ */
 - (BOOL)stillListening {
     int listening = 0;
     socklen_t size = sizeof(listening);
 
-    if (getsockopt(_socket, SOL_SOCKET, SO_ACCEPTCONN, &listening, &size) != 0) {
+    if (getsockopt(_socket, SOL_SOCKET, SO_ACCEPTCONN, &listening, &size) == 0) {
+        return listening != 0;
+    }
+
+    if (errno != ENOPROTOOPT) {
         return NO;
     }
 
-    return listening != 0;
+    int type = 0;
+    socklen_t typeSize = sizeof(type);
+
+    if (getsockopt(_socket, SOL_SOCKET, SO_TYPE, &type, &typeSize) != 0 || type != SOCK_STREAM) {
+        return NO;
+    }
+
+    struct sockaddr_in address;
+    socklen_t addressSize = sizeof(address);
+
+    memset(&address, 0, sizeof(address));
+
+    if (getsockname(_socket, (struct sockaddr *)&address, &addressSize) != 0) {
+        return NO;
+    }
+
+    return address.sin_family == AF_INET && ntohs(address.sin_port) == _port;
 }
 
 - (void)acceptLoop:(NSNumber *)handle {
