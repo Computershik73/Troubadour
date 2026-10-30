@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 
 #import "YTTheme.h"
+#import "YTMemoryCensus.h"
 
 /**
  * Кеш готовых скруглённых кадров.
@@ -56,6 +57,15 @@
 @end
 
 
+static YTCacheTally *YTFrameTally(void) {
+    static YTCacheTally *tally = nil;
+    static dispatch_once_t once;
+
+    dispatch_once(&once, ^{ tally = [[YTCacheTally alloc] init]; });
+
+    return tally;
+}
+
 static NSCache *YTFrameCache(void) {
     static NSCache *cache = nil;
     static dispatch_once_t once;
@@ -63,6 +73,12 @@ static NSCache *YTFrameCache(void) {
     dispatch_once(&once, ^{
         cache = [[NSCache alloc] init];
         [cache setTotalCostLimit:6 * 1024 * 1024];
+        [cache setDelegate:YTFrameTally()];
+
+        [[NSNotificationCenter defaultCenter] addObserver:[YTRoundedImageView class]
+                                                 selector:@selector(memoryCensus:)
+                                                     name:YTMemoryCensusNotification
+                                                   object:nil];
     });
 
     return cache;
@@ -159,10 +175,7 @@ static NSCache *YTFrameCache(void) {
     CGFloat radius = [self effectiveRadius];
 
     if (_image == nil) {
-        // Заглушка рисуется тем же путём, что и кадр, — иначе у пустого
-        // места были бы прямые углы, а у заполненного скруглённые, и при
-        // догрузке картинки форма менялась бы на глазах.
-        [[self layer] setContents:(__bridge id)[[self renderPlaceholder:size radius:radius] CGImage]];
+        [self showPlaceholder:radius];
         return;
     }
 
@@ -178,12 +191,37 @@ static NSCache *YTFrameCache(void) {
         ready = [self renderFrame:size radius:radius];
 
         if (ready != nil) {
-            NSUInteger cost = (NSUInteger)(size.width * size.height * 4);
+            CGImageRef bitmap = [ready CGImage];
+            NSUInteger cost = CGImageGetBytesPerRow(bitmap) * CGImageGetHeight(bitmap);
+
+            [YTFrameTally() noteObject:ready cost:cost];
             [YTFrameCache() setObject:ready forKey:key cost:cost];
         }
     }
 
+    // У кадра углы скруглены в нём самом — фон слоя под ним не нужен.
+    [[self layer] setBackgroundColor:NULL];
+    [[self layer] setCornerRadius:0];
     [[self layer] setContents:(__bridge id)[ready CGImage]];
+}
+
+/**
+ * Заглушка — цветом фона слоя, а не картинкой.
+ *
+ * Прежде она рисовалась тем же путём, что и кадр, — отдельным растром
+ * во весь размер места: так у пустого места были те же скруглённые углы.
+ * Но растр заглушки весит ровно столько же, сколько кадр, и на iPad 2
+ * карточка похожих шириной в 720 точек держала 1,2 МБ, даже не получив
+ * картинки: двадцать карточек — 23 МБ одних заглушек, и ленивая
+ * загрузка ничего не давала. Скругление фона слоя даёт ту же форму без
+ * единого байта растра.
+ */
+- (void)showPlaceholder:(CGFloat)radius {
+    CALayer *layer = [self layer];
+
+    [layer setContents:nil];
+    [layer setBackgroundColor:[(_placeholderColor ?: [YTTheme videoPlaceholder]) CGColor]];
+    [layer setCornerRadius:radius];
 }
 
 - (CGFloat)screenScale {
@@ -208,26 +246,29 @@ static NSCache *YTFrameCache(void) {
     CGContextClosePath(context);
 }
 
-- (UIImage *)renderPlaceholder:(CGSize)size radius:(CGFloat)radius {
-    UIGraphicsBeginImageContextWithOptions(size, NO, [self screenScale]);
-
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGRect box = CGRectMake(0, 0, size.width, size.height);
-
-    [self addRoundedPath:context rect:box radius:radius];
-
-    CGContextSetFillColorWithColor(context,
-        [(_placeholderColor ?: [YTTheme videoPlaceholder]) CGColor]);
-    CGContextFillPath(context);
-
-    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-
-    return result;
-}
-
 - (UIImage *)renderFrame:(CGSize)size radius:(CGFloat)radius {
-    UIGraphicsBeginImageContextWithOptions(size, NO, [self screenScale]);
+    CGSize source = CGSizeMake(CGImageGetWidth([_image CGImage]),
+                               CGImageGetHeight([_image CGImage]));
+
+    /**
+     * Растр — не плотнее самого исходника.
+     *
+     * Кадр рисовался в размер места на экране, сколько бы точек ни было
+     * в превью: на iPad 2 исходник в 368 точек шириной ложился в карточку
+     * на 720 — растр вчетверо больше по площади, а резче от этого
+     * не становилось ничего. Теперь плотность растра ограничена плотностью
+     * исходника, и слой растягивает его на место сам — тем же самым
+     * сглаживанием, каким растягивал бы его рисунок.
+     */
+    CGFloat scale = [self screenScale];
+
+    if (source.width > 0 && source.height > 0) {
+        CGFloat available = MAX(source.width / size.width, source.height / size.height);
+
+        scale = MAX((CGFloat)0.25, MIN(scale, available));
+    }
+
+    UIGraphicsBeginImageContextWithOptions(size, NO, scale);
 
     CGContextRef context = UIGraphicsGetCurrentContext();
     CGRect box = CGRectMake(0, 0, size.width, size.height);
@@ -242,9 +283,6 @@ static NSCache *YTFrameCache(void) {
      * так что обрезать обычно нечего; а вот кружок канала приходит квадратным
      * и без этого растянулся бы.
      */
-    CGSize source = CGSizeMake(CGImageGetWidth([_image CGImage]),
-                               CGImageGetHeight([_image CGImage]));
-
     if (source.width > 0 && source.height > 0) {
         CGFloat scale = MAX(size.width / source.width, size.height / source.height);
 
@@ -262,14 +300,25 @@ static NSCache *YTFrameCache(void) {
     return result;
 }
 
++ (void)memoryCensus:(NSNotification *)note {
+    [[[note userInfo] objectForKey:YTMemoryCensusNotesKey] addObject:
+        [@"кеш скруглённых кадров " stringByAppendingString:[YTFrameTally() summary]]];
+}
+
+- (NSUInteger)contentsBytes {
+    CGImageRef image = (__bridge CGImageRef)[[self layer] contents];
+
+    return (image != NULL) ? CGImageGetBytesPerRow(image) * CGImageGetHeight(image) : 0;
+}
+
 - (void)dropContents {
     _image = nil;
 
-    // Размер считаем «уже отрисованным»: иначе первая же раскладка
-    // нарисовала бы на месте кадра заглушку — тот же объём памяти.
+    // Размер считаем «уже отрисованным»: раскладке перерисовывать нечего.
     _renderedFor = [self bounds].size;
 
-    [[self layer] setContents:nil];
+    // Заглушка теперь цветом фона и памяти не стоит — пусть место не пустует.
+    [self showPlaceholder:[self effectiveRadius]];
 }
 
 + (void)trimFrames {

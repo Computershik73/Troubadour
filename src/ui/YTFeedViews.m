@@ -325,17 +325,20 @@ static const CGFloat YTCardTextGap = 4;
 
     _imagesReleased = YES;
 
-    /**
-     * Сперва слой, потом адрес. Пустой адрес снимает ждущую загрузку
-     * (её ответ сверяется с адресом) и ставит картинке nil; будь она
-     * ещё на месте, на её месте нарисовалась бы заглушка того же
-     * размера — двадцать карточек разом на входе в полный экран.
-     */
+    // Пустой адрес снимает и ждущую загрузку: её ответ сверяется с адресом.
     [_thumb dropContents];
     [_avatar dropContents];
 
     [YTImageLoader loadInto:_thumb url:nil targetWidth:0];
     [YTImageLoader loadInto:_avatar url:nil targetWidth:YTCardAvatar];
+}
+
+- (BOOL)hasImages {
+    return !_imagesReleased;
+}
+
+- (NSUInteger)imageBytes {
+    return [_thumb contentsBytes] + [_avatar contentsBytes];
 }
 
 - (void)restoreImages {

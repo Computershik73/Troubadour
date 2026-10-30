@@ -1,10 +1,12 @@
 #import "YTAppDelegate.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <QuartzCore/QuartzCore.h>
 
 #import "YTApi.h"
 #import "YTAuth.h"
 #import "YTCrashWatch.h"
+#import "YTMemoryCensus.h"
 #import "YTWebAuth.h"
 #import "YTNSig.h"
 #import "YTPoToken.h"
@@ -33,6 +35,9 @@
 
     // Чем кончился прошлый запуск, и ловушки на случай падения в этом.
     YTCrashWatchStart();
+
+    // Кто сколько держит памяти — раз в двадцать секунд, в журнал.
+    YTMemoryCensusStart();
 
     /**
      * Обход блокировок — до первого запроса.
@@ -251,6 +256,88 @@
         default:
             break;
     }
+}
+
+/**
+ * `troubadour://watch?v=<id>` — открыть ролик.
+ *
+ * Годится и ссылка YouTube целиком после `troubadour://open?url=`:
+ * номер ролика берётся из её `v=` или из пути `youtu.be/<id>`.
+ */
+- (BOOL)application:(UIApplication *)application
+            openURL:(NSURL *)url
+  sourceApplication:(NSString *)source
+         annotation:(id)annotation {
+    NSString *text = [[url absoluteString] stringByReplacingPercentEscapesUsingEncoding:
+        NSUTF8StringEncoding];
+    NSString *videoId = nil;
+
+#ifndef YT_NO_LOG
+    /**
+     * Отладочные команды — только в отладочной сборке, для проверок
+     * на устройстве по SSH, где пальца нет:
+     *
+     *   troubadour://debug/snapshot    снимок окна в Documents/snapshot.png
+     *   troubadour://debug/scroll?y=N  прокрутка списка страницы ролика
+     */
+    if ([[url host] isEqualToString:@"debug"]) {
+        if ([[url path] isEqualToString:@"/snapshot"]) {
+            UIWindow *window = [[UIApplication sharedApplication] keyWindow];
+
+            UIGraphicsBeginImageContextWithOptions([window bounds].size, YES, 0);
+            [[window layer] renderInContext:UIGraphicsGetCurrentContext()];
+
+            UIImage *shot = UIGraphicsGetImageFromCurrentImageContext();
+
+            UIGraphicsEndImageContext();
+
+            NSString *path = [[NSSearchPathForDirectoriesInDomains(
+                NSDocumentDirectory, NSUserDomainMask, YES) objectAtIndex:0]
+                stringByAppendingPathComponent:@"snapshot.png"];
+
+            [UIImagePNGRepresentation(shot) writeToFile:path atomically:YES];
+
+            NSLog(@"[YouTube/Отладка] Снимок окна: %@", path);
+        } else if ([[url path] isEqualToString:@"/scroll"]) {
+            NSRange y = [text rangeOfString:@"y="];
+            CGFloat offset = (y.location != NSNotFound)
+                ? [[text substringFromIndex:NSMaxRange(y)] floatValue] : 0;
+
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:@"YTDebugScroll"
+                              object:[NSNumber numberWithFloat:offset]];
+        }
+
+        return YES;
+    }
+#endif
+
+    NSRange v = [text rangeOfString:@"v="];
+
+    if (v.location != NSNotFound) {
+        videoId = [[[text substringFromIndex:NSMaxRange(v)]
+            componentsSeparatedByCharactersInSet:
+                [NSCharacterSet characterSetWithCharactersInString:@"&#?/"]] objectAtIndex:0];
+    } else {
+        NSRange short_ = [text rangeOfString:@"youtu.be/"];
+
+        if (short_.location != NSNotFound) {
+            videoId = [[[text substringFromIndex:NSMaxRange(short_)]
+                componentsSeparatedByCharactersInSet:
+                    [NSCharacterSet characterSetWithCharactersInString:@"&#?/"]] objectAtIndex:0];
+        }
+    }
+
+    if ([videoId length] != 11) {
+        NSLog(@"[YouTube] Ссылка не понята: %@", [url absoluteString]);
+        return NO;
+    }
+
+    NSLog(@"[YouTube] Открываем по ссылке: %@", videoId);
+
+    [YTNav openVideo:videoId title:@""];
+
+    return YES;
 }
 
 - (void)applicationDidReceiveMemoryWarning:(UIApplication *)application {

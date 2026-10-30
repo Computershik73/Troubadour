@@ -15,6 +15,7 @@
 #import "YTStreams.h"
 #import "YTTsMuxer.h"
 #import "YTUtil.h"
+#import "YTMemoryCensus.h"
 
 /** Один сэмпл, готовый к укладке в TS. */
 /** Шкала дорожки нужна, чтобы двигать время эфира на свою ось. */
@@ -249,9 +250,34 @@
     if (self != nil) {
         _socket = -1;
         _lock = [[NSObject alloc] init];
+
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(memoryCensus:)
+                                                     name:YTMemoryCensusNotification
+                                                   object:nil];
     }
 
     return self;
+}
+
+/** Строка подачи в переписи памяти: сколько фрагментов лежит и сколько они весят. */
+- (void)memoryCensus:(NSNotification *)note {
+    YTSabr *sabr = nil;
+    NSString *segment = nil;
+
+    @synchronized (_lock) {
+        sabr = _sabr;
+        segment = (_lastSegment != nil)
+            ? [NSString stringWithFormat:@", собранный кусок %lu КБ",
+               (unsigned long)([_lastSegment length] / 1024)] : @"";
+    }
+
+    if (sabr == nil) {
+        return;
+    }
+
+    [[[note userInfo] objectForKey:YTMemoryCensusNotesKey] addObject:
+        [NSString stringWithFormat:@"подача: %@%@", [sabr storageNote], segment]];
 }
 
 #pragma mark Сервер

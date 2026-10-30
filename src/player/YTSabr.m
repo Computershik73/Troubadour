@@ -4730,6 +4730,30 @@ static const NSUInteger YTSabrMeasureBytes = 128 * 1024;
 }
 
 - (NSInteger)videoSegmentCount { return _videoSegmentCount; }
+
+- (NSString *)storageNote {
+    NSUInteger videoBytes = 0;
+    NSUInteger audioBytes = 0;
+    NSUInteger videoCount = 0;
+    NSUInteger audioCount = 0;
+
+    @synchronized (self) {
+        for (NSData *body in [_videoSegments allValues]) {
+            videoBytes += [body length];
+        }
+
+        for (NSData *body in [_audioSegments allValues]) {
+            audioBytes += [body length];
+        }
+
+        videoCount = [_videoSegments count];
+        audioCount = [_audioSegments count];
+    }
+
+    return [NSString stringWithFormat:@"видео %lu фр. %.1f МБ, звук %lu фр. %.1f МБ",
+            (unsigned long)videoCount, videoBytes / 1048576.0,
+            (unsigned long)audioCount, audioBytes / 1048576.0];
+}
 - (NSTimeInterval)duration { return _duration; }
 
 @end

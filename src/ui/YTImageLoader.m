@@ -6,6 +6,7 @@
 
 #import "YTHttp.h"
 #import "YTSettings.h"
+#import "YTMemoryCensus.h"
 
 static NSString *const YTImageTag = @"YTImageRequestedUrl";
 
@@ -158,9 +159,32 @@ static CGFloat YTMaxDecodeWidth(void) {
         // поэтому доля берётся от физической памяти устройства, а не от кучи:
         // понятия «максимальный размер кучи» на iOS попросту нет.
         [cache setTotalCostLimit:MAX(limit, 4 * 1024 * 1024)];
+
+        // Сколько в нём лежит — для переписи памяти (сам кеш этого не скажет).
+        [cache setDelegate:[self tally]];
+
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(memoryCensus:)
+                                                     name:YTMemoryCensusNotification
+                                                   object:nil];
     });
 
     return cache;
+}
+
++ (YTCacheTally *)tally {
+    static YTCacheTally *tally = nil;
+    static dispatch_once_t once;
+
+    dispatch_once(&once, ^{ tally = [[YTCacheTally alloc] init]; });
+
+    return tally;
+}
+
++ (void)memoryCensus:(NSNotification *)note {
+    [[[note userInfo] objectForKey:YTMemoryCensusNotesKey] addObject:
+        [NSString stringWithFormat:@"кеш превью %@ (предел %.0f МБ)", [[self tally] summary],
+         [[self cache] totalCostLimit] / 1048576.0]];
 }
 
 /**
@@ -1052,6 +1076,7 @@ static NSTimeInterval YTLastTrustSeconds = 0;
     NSUInteger cost = (NSUInteger)(have * CGImageGetHeight([image CGImage]) *
                                    (YTSmallMemory() ? 2 : 4));
 
+    [[self tally] noteObject:image cost:cost];
     [[self cache] setObject:image forKey:url cost:cost];
 
     return image;

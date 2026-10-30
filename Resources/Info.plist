@@ -29,6 +29,22 @@
 	<string>ru.computershik.troubadour</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<!--
+	  troubadour://watch?v=<id> — открыть ролик. Для ссылок из других
+	  приложений и Activator, а заодно для проверок на устройстве по SSH
+	  (uiopen): иначе до страницы ролика без пальца не добраться.
+	-->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>ru.computershik.troubadour</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>troubadour</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleName</key>
 	<string>Troubadour</string>
 	<key>CFBundlePackageType</key>

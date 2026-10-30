@@ -6,6 +6,7 @@
 #import "YTJSEngine.h"
 #import "YTPlayerJs.h"
 #import "YTUtil.h"
+#import "YTMemoryCensus.h"
 
 /** Сколько подъёмов голого движка подряд оборвалось на полпути. */
 static NSString *const YTNSigBareInterruptedKey = @"YTNSigBareInterrupted";
@@ -133,6 +134,11 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(releaseHeavy)
                                                      name:YTReleaseHeavyNotification
+                                                   object:nil];
+
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(memoryCensus:)
+                                                     name:YTMemoryCensusNotification
                                                    object:nil];
     }
 
@@ -285,6 +291,19 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
     // когда веб-вид дойдёт до освобождения.
     [web loadHTMLString:@"" baseURL:nil];
     [web removeFromSuperview];
+}
+
+/** Строка решателя в переписи памяти. */
+- (void)memoryCensus:(NSNotification *)note {
+    NSString *state;
+
+    @synchronized (self) {
+        state = (_js != nil) ? @"в голом движке"
+              : (_web != nil) ? @"в веб-виде" : @"выгружен";
+    }
+
+    [[[note userInfo] objectForKey:YTMemoryCensusNotesKey] addObject:
+        [@"решатель n " stringByAppendingString:state]];
 }
 
 /** Поднят ли решатель — в веб-виде или в голом движке. */

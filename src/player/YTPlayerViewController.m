@@ -11,6 +11,7 @@
 #import "YTFeedViews.h"
 #import "YTHlsProxy.h"
 #import "YTImageLoader.h"
+#import "YTMemoryCensus.h"
 #import "YTJson.h"
 #import "YTMetrics.h"
 #import "YTRoundedImageView.h"
@@ -113,7 +114,8 @@ static const CGFloat YTPageMargin = 16;
 @end
 
 @interface YTPlayerViewController () <UIGestureRecognizerDelegate,
-                                     UIActionSheetDelegate, UIAlertViewDelegate>
+                                     UIActionSheetDelegate, UIAlertViewDelegate,
+                                     UIScrollViewDelegate>
 @end
 
 @interface YTPlayerViewController ()
@@ -417,6 +419,13 @@ static const CGFloat YTPageMargin = 16;
 
     /** Карточки, чьи превью ещё возвращаются по одной после выхода. */
     NSMutableArray *_columnRestoring;
+
+    /**
+     * Превью строк очереди — лениво, как у карточек похожих:
+     * [вид, адрес] на строку, и какие из них сейчас с картинкой.
+     */
+    NSMutableArray *_queueThumbs;
+    NSMutableIndexSet *_queueThumbsShown;
 
     BOOL _controlsVisible;
     BOOL _seeking;
@@ -799,6 +808,9 @@ static const CGFloat YTPageMargin = 16;
 
     _page = [[UIScrollView alloc] initWithFrame:CGRectZero];
     [_page setBackgroundColor:[YTTheme background]];
+
+    // Прокрутка решает, каким карточкам нужны картинки (updatePageImages).
+    [_page setDelegate:self];
     [[self view] addSubview:_page];
 
     [self buildStage];
@@ -842,6 +854,19 @@ static const CGFloat YTPageMargin = 16;
                                              selector:@selector(releaseColumnImages)
                                                  name:YTReleaseHeavyNotification
                                                object:nil];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(memoryCensus:)
+                                                 name:YTMemoryCensusNotification
+                                               object:nil];
+
+#ifndef YT_NO_LOG
+    // Отладка по SSH: troubadour://debug/scroll?y=N (см. YTAppDelegate).
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(debugScroll:)
+                                                 name:@"YTDebugScroll"
+                                               object:nil];
+#endif
 
     [self adoptFromMini];
 
@@ -2078,6 +2103,7 @@ static const CGFloat YTPageMargin = 16;
 
     [_side setBackgroundColor:[YTTheme background]];
     [_side setShowsVerticalScrollIndicator:NO];
+    [_side setDelegate:self];
     [_side setHidden:YES];
     [[self view] addSubview:_side];
 
@@ -4526,6 +4552,9 @@ static NSMutableArray *YTJamItems = nil;
 
     [_queueRows removeAllObjects];
 
+    _queueThumbs = [NSMutableArray array];
+    _queueThumbsShown = [NSMutableIndexSet indexSet];
+
     if (!has) {
         return;
     }
@@ -4566,7 +4595,8 @@ static NSMutableArray *YTJamItems = nil;
         [thumb setPlaceholderColor:[YTTheme videoPlaceholder]];
         [row addSubview:thumb];
 
-        [YTImageLoader loadInto:thumb url:item.thumbnail targetWidth:104];
+        // Картинку попросит updatePageImages, когда строка окажется рядом с экраном.
+        [_queueThumbs addObject:[NSArray arrayWithObjects:thumb, item.thumbnail ?: @"", nil]];
 
         UILabel *name = YTLabel(YTFontRegular(13), [YTTheme primaryText], 2);
 
@@ -4801,19 +4831,32 @@ static NSMutableArray *YTJamItems = nil;
 
         if (i >= [related count]) {
             [card setHidden:YES];
+            [card releaseImages];
             continue;
+        }
+
+        /**
+         * Картинки — только тем, кто рядом с экраном (updatePageImages).
+         *
+         * Прежде каждая карточка просила превью и кружок, как только её
+         * раскладывали, а раскладываются все двадцать сразу, и те, до
+         * которых человек не долистает. Карточка начинает без картинок,
+         * а проход после раскладки возвращает их видимым.
+         */
+        if (!YTEagerPageImages() || _columnReleased) {
+            [card releaseImages];
         }
 
         [card setHidden:NO];
         [card bind:[related objectAtIndex:i]];
-
-        // Список пришёл, пока колонка спрятана, — и новым карточкам ждать выхода.
-        if (_columnReleased) {
-            [card releaseImages];
-        }
     }
 
     [[self view] setNeedsLayout];
+
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(censusAfterRelated)
+                                               object:nil];
+    [self performSelector:@selector(censusAfterRelated) withObject:nil afterDelay:4.0];
 }
 
 /**
@@ -8035,8 +8078,169 @@ static NSMutableArray *YTJamItems = nil;
         [card releaseImages];
     }
 
+    [self dropQueueThumbsWhere:^BOOL(CGRect frame) { return YES; }];
+
     YTLogWriteNow(@"[YouTube/Плеер] Полный экран: превью похожих отпущены (%lu), занято %.0f МБ",
                   (unsigned long)[_relatedCards count], YTResidentMegabytes());
+}
+
+/**
+ * Отладочное: все картинки страницы сразу, как до ленивой загрузки.
+ *
+ * Только для сравнения расхода на устройстве:
+ * `defaults write ru.computershik.troubadour YTEagerPageImages -bool YES`.
+ */
+static BOOL YTEagerPageImages(void) {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"YTEagerPageImages"];
+}
+
+/** Видимая часть списка и её окрестности: где картинки нужны и где их можно отпустить. */
+- (void)pageImageZones:(CGRect *)near keep:(CGRect *)keep {
+    UIScrollView *host = (UIScrollView *)[self listHost];
+    CGRect visible = CGRectMake([host contentOffset].x, [host contentOffset].y,
+                                [host bounds].size.width, [host bounds].size.height);
+    CGFloat screen = visible.size.height;
+
+    /**
+     * Экран сверху и снизу — грузим заранее; дальше полутора экранов
+     * (двух с половиной, где память не тесна) — отпускаем. Возврат дёшев:
+     * превью лежат в кеше, а карточка похожих на iPad в портрете шириной
+     * во весь экран и держит почти мегабайт.
+     */
+    *near = CGRectInset(visible, 0, -screen);
+    *keep = CGRectInset(visible, 0, -(YTTightMemory() ? 1.5 : 2.5) * screen);
+}
+
+/** Отпускает превью строк очереди, чья рамка подходит под условие. */
+- (void)dropQueueThumbsWhere:(BOOL (^)(CGRect frame))condition {
+    for (NSUInteger i = 0; i < [_queueRows count] && i < [_queueThumbs count]; i++) {
+        if (![_queueThumbsShown containsIndex:i] ||
+            !condition([[_queueRows objectAtIndex:i] frame])) {
+            continue;
+        }
+
+        YTRoundedImageView *thumb = [[_queueThumbs objectAtIndex:i] objectAtIndex:0];
+
+        [thumb dropContents];
+        [YTImageLoader loadInto:thumb url:nil targetWidth:104];
+        [_queueThumbsShown removeIndex:i];
+    }
+}
+
+/**
+ * Ленивые картинки страницы ролика.
+ *
+ * Похожие, очередь и главы лежат прямо в прокрутке, без таблицы, и
+ * раскладываются все сразу. Прежде все они сразу же и просили картинки:
+ * двадцать похожих с кружками авторов и вся очередь микса — полсотни
+ * превью, — хотя на экране из этого помещается пять-шесть. Теперь
+ * картинку получает только то, что в пределах экрана от видимого,
+ * а то, что ушло далеко, её отпускает (вернётся из кеша, если долистать).
+ *
+ * Зовётся после раскладки и на каждом шаге прокрутки: перебор пары
+ * десятков рамок ничего не стоит, а картинки трогаются только при
+ * смене состояния карточки.
+ */
+- (void)updatePageImages {
+    if (_fullscreenMode || YTEagerPageImages()) {
+        return;
+    }
+
+    CGRect near, keep;
+
+    [self pageImageZones:&near keep:&keep];
+
+    if (CGRectIsEmpty(near)) {
+        return;
+    }
+
+    // После полного экрана видимые возвращаются по одной (restoreColumnImages) — не торопим.
+    BOOL staggering = (_columnRestoring != nil);
+
+    for (YTVideoCard *card in _relatedCards) {
+        if ([card isHidden]) {
+            continue;
+        }
+
+        if (CGRectIntersectsRect([card frame], near)) {
+            if (!staggering) {
+                [card restoreImages];
+            }
+        } else if (!CGRectIntersectsRect([card frame], keep)) {
+            [card releaseImages];
+        }
+    }
+
+    for (NSUInteger i = 0; i < [_queueRows count] && i < [_queueThumbs count]; i++) {
+        if ([_queueThumbsShown containsIndex:i] ||
+            !CGRectIntersectsRect([[_queueRows objectAtIndex:i] frame], near)) {
+            continue;
+        }
+
+        NSArray *pair = [_queueThumbs objectAtIndex:i];
+
+        [YTImageLoader loadInto:[pair objectAtIndex:0] url:[pair objectAtIndex:1] targetWidth:104];
+        [_queueThumbsShown addIndex:i];
+    }
+
+    [self dropQueueThumbsWhere:^BOOL(CGRect frame) {
+        return !CGRectIntersectsRect(frame, keep);
+    }];
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    if (scrollView == _page || scrollView == _side) {
+        [self updatePageImages];
+    }
+}
+
+/** Строка страницы в переписи памяти: сколько карточек и у скольких картинки. */
+- (void)memoryCensus:(NSNotification *)note {
+    NSUInteger related = 0;
+    NSUInteger shown = 0;
+    NSUInteger bytes = 0;
+
+    for (YTVideoCard *card in _relatedCards) {
+        bytes += [card imageBytes];
+
+        if ([card isHidden]) {
+            continue;
+        }
+
+        related++;
+
+        if ([card hasImages]) {
+            shown++;
+        }
+    }
+
+    for (NSArray *pair in _queueThumbs) {
+        bytes += [(YTRoundedImageView *)[pair objectAtIndex:0] contentsBytes];
+    }
+
+    [[[note userInfo] objectForKey:YTMemoryCensusNotesKey] addObject:
+        [NSString stringWithFormat:@"страница %@: похожих %lu (с картинками %lu), "
+                                   @"очередь %lu (с картинками %lu), кадры на слоях %.1f МБ%@",
+         _videoId, (unsigned long)related, (unsigned long)shown,
+         (unsigned long)[_queueRows count], (unsigned long)[_queueThumbsShown count],
+         bytes / 1048576.0, _fullscreenMode ? @", полный экран" : @""]];
+}
+
+#ifndef YT_NO_LOG
+- (void)debugScroll:(NSNotification *)note {
+    UIScrollView *host = (UIScrollView *)[self listHost];
+    CGFloat limit = MAX((CGFloat)0, [host contentSize].height - [host bounds].size.height);
+    CGFloat y = MIN(limit, MAX((CGFloat)0, [[note object] floatValue]));
+
+    [host setContentOffset:CGPointMake(0, y) animated:NO];
+
+    NSLog(@"[YouTube/Отладка] Прокрутка списка на %.0f (из %.0f)", y, limit);
+}
+#endif
+
+/** Перепись, когда похожие разложены и их картинки успели приехать. */
+- (void)censusAfterRelated {
+    YTMemoryCensusNow(@"похожие разложены");
 }
 
 /** Расстояние карточки до видимой части колонки; ноль — видна. */
@@ -8070,7 +8274,23 @@ static CGFloat YTCardDistance(UIView *card, CGRect visible) {
     CGRect visible = CGRectMake([host contentOffset].x, [host contentOffset].y,
                                 [host bounds].size.width, [host bounds].size.height);
 
-    _columnRestoring = [[_relatedCards sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
+    CGRect near, keep;
+
+    [self pageImageZones:&near keep:&keep];
+
+    /**
+     * Возвращаем только тем, кому картинка нужна сейчас, — тем, кто рядом
+     * с экраном. Остальные получат её прокруткой (updatePageImages).
+     */
+    NSMutableArray *wanted = [NSMutableArray array];
+
+    for (YTVideoCard *card in _relatedCards) {
+        if (![card isHidden] && (YTEagerPageImages() || CGRectIntersectsRect([card frame], near))) {
+            [wanted addObject:card];
+        }
+    }
+
+    _columnRestoring = [[wanted sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
         CGFloat left = YTCardDistance(a, visible);
         CGFloat right = YTCardDistance(b, visible);
 
@@ -8088,6 +8308,9 @@ static CGFloat YTCardDistance(UIView *card, CGRect visible) {
 - (void)restoreNextColumnImage {
     if ([_columnRestoring count] == 0) {
         _columnRestoring = nil;
+
+        // Пока возвращали, могли и пролистать — догоняем видимое.
+        [self updatePageImages];
         return;
     }
 
@@ -8754,6 +8977,8 @@ static const CGFloat YTSplitLeftShare = 0.62;
     [_columnDivider setHidden:!_split];
 
     if (!_split) {
+        // Рамки на месте — пора решать, кому картинки (ленивая загрузка).
+        [self updatePageImages];
         return;
     }
 
@@ -8779,6 +9004,8 @@ static const CGFloat YTSplitLeftShare = 0.62;
     y = [self layoutRelatedAt:y width:right - 0.5];
 
     [_side setContentSize:CGSizeMake(right - 0.5, y + 24)];
+
+    [self updatePageImages];
 }
 
 - (void)layoutStage {

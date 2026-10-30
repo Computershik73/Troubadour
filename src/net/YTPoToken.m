@@ -5,6 +5,7 @@
 #import "YTHttp.h"
 #import "YTJson.h"
 #import "YTUtil.h"
+#import "YTMemoryCensus.h"
 
 /**
  * Ключ запроса задачи и ключ службы аттестации — постоянные, из
@@ -55,7 +56,14 @@ static NSString *const YTResponseScheme = @"botguard-response://";
     static YTPoToken *shared = nil;
     static dispatch_once_t once;
 
-    dispatch_once(&once, ^{ shared = [[YTPoToken alloc] init]; });
+    dispatch_once(&once, ^{
+        shared = [[YTPoToken alloc] init];
+
+        [[NSNotificationCenter defaultCenter] addObserver:shared
+                                                 selector:@selector(memoryCensus:)
+                                                     name:YTMemoryCensusNotification
+                                                   object:nil];
+    });
 
     return shared;
 }
@@ -64,6 +72,13 @@ static NSString *const YTResponseScheme = @"botguard-response://";
     @synchronized (self) {
         return _ready;
     }
+}
+
+/** Строка чеканщика в переписи памяти: веб-вид BotGuard живёт всю работу. */
+- (void)memoryCensus:(NSNotification *)note {
+    [[[note userInfo] objectForKey:YTMemoryCensusNotesKey] addObject:
+        (_web != nil) ? ([self isReady] ? @"чеканщик PO поднят" : @"чеканщик PO поднимается")
+                      : @"чеканщика PO нет"];
 }
 
 #pragma mark Шаг 1 — страница-решатель
