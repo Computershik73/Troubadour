@@ -4,6 +4,7 @@
 
 #import "YTApi.h"
 #import "YTAuth.h"
+#import "YTCrashWatch.h"
 #import "YTWebAuth.h"
 #import "YTNSig.h"
 #import "YTPoToken.h"
@@ -29,6 +30,9 @@
      * приложение; на каждом принятом соединении вдобавок стоит SO_NOSIGPIPE.
      */
     signal(SIGPIPE, SIG_IGN);
+
+    // Чем кончился прошлый запуск, и ловушки на случай падения в этом.
+    YTCrashWatchStart();
 
     /**
      * Обход блокировок — до первого запроса.
@@ -276,7 +280,17 @@
      */
     [YTWebAuth keepSession];
 
+    YTCrashWatchForeground(NO);
+
     NSLog(@"[YouTube/Память] Ушли в фон — картинки отданы");
+}
+
+- (void)applicationWillEnterForeground:(UIApplication *)application {
+    YTCrashWatchForeground(YES);
+}
+
+- (void)applicationWillTerminate:(UIApplication *)application {
+    YTCrashWatchClean();
 }
 
 @end
