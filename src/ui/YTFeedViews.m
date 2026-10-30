@@ -35,6 +35,9 @@ static const CGFloat YTCardTextGap = 4;
     UILabel *_meta;
 
     YTVideoItem *_item;
+
+    /** Картинки отпущены (releaseImages) — до restoreImages не просим их. */
+    BOOL _imagesReleased;
 }
 
 + (CGFloat)thumbHeightForWidth:(CGFloat)width {
@@ -307,11 +310,51 @@ static const CGFloat YTCardTextGap = 4;
     // заказываем оттуда — там же, где считается место под картинку.
     [self setNeedsLayout];
 
-    if (hasAvatar) {
+    // Отпущенная карточка кружок не просит: его вернёт restoreImages.
+    if (hasAvatar && !_imagesReleased) {
         [YTImageLoader loadInto:_avatar url:item.channelThumbnail targetWidth:YTCardAvatar];
     } else {
         [YTImageLoader loadInto:_avatar url:nil targetWidth:YTCardAvatar];
     }
+}
+
+- (void)releaseImages {
+    if (_imagesReleased) {
+        return;
+    }
+
+    _imagesReleased = YES;
+
+    /**
+     * Сперва слой, потом адрес. Пустой адрес снимает ждущую загрузку
+     * (её ответ сверяется с адресом) и ставит картинке nil; будь она
+     * ещё на месте, на её месте нарисовалась бы заглушка того же
+     * размера — двадцать карточек разом на входе в полный экран.
+     */
+    [_thumb dropContents];
+    [_avatar dropContents];
+
+    [YTImageLoader loadInto:_thumb url:nil targetWidth:0];
+    [YTImageLoader loadInto:_avatar url:nil targetWidth:YTCardAvatar];
+}
+
+- (void)restoreImages {
+    if (!_imagesReleased) {
+        return;
+    }
+
+    _imagesReleased = NO;
+
+    // Заглушка — пока картинка едет: пустое место выглядело бы дырой.
+    [_thumb setPlaceholderColor:[YTTheme surfaceAlt]];
+
+    if (_item != nil && ![_avatar isHidden] && [_item.channelThumbnail length] > 0) {
+        [_avatar setPlaceholderColor:[YTTheme avatarPlaceholder]];
+        [YTImageLoader loadInto:_avatar url:_item.channelThumbnail targetWidth:YTCardAvatar];
+    }
+
+    // Превью просит раскладка: ширину знает только она.
+    [self setNeedsLayout];
 }
 
 - (void)layoutSubviews {
@@ -356,7 +399,7 @@ static const CGFloat YTCardTextGap = 4;
      * названное число, и если оно не совпадает с местом на экране, картинка
      * либо мылит, либо зря занимает память.
      */
-    if (_item != nil) {
+    if (_item != nil && !_imagesReleased) {
         [YTImageLoader loadInto:_thumb url:_item.thumbnail targetWidth:width];
     }
 

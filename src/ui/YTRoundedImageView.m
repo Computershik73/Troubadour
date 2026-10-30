@@ -262,6 +262,16 @@ static NSCache *YTFrameCache(void) {
     return result;
 }
 
+- (void)dropContents {
+    _image = nil;
+
+    // Размер считаем «уже отрисованным»: иначе первая же раскладка
+    // нарисовала бы на месте кадра заглушку — тот же объём памяти.
+    _renderedFor = [self bounds].size;
+
+    [[self layer] setContents:nil];
+}
+
 + (void)trimFrames {
     [YTFrameCache() removeAllObjects];
 }

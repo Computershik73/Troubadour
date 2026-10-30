@@ -411,6 +411,13 @@ static const CGFloat YTPageMargin = 16;
     NSInteger _stepDowns;
 
     BOOL _fullscreenMode;
+
+    /** Превью похожих отпущены на время полного экрана (releaseColumnImages). */
+    BOOL _columnReleased;
+
+    /** Карточки, чьи превью ещё возвращаются по одной после выхода. */
+    NSMutableArray *_columnRestoring;
+
     BOOL _controlsVisible;
     BOOL _seeking;
 
@@ -828,6 +835,12 @@ static const CGFloat YTPageMargin = 16;
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(sabrRefusedPick)
                                                  name:YTSabrPinRefusedNotification
+                                               object:nil];
+
+    // Память попросили посреди полного экрана — спрятанная колонка отдаёт превью.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(releaseColumnImages)
+                                                 name:YTReleaseHeavyNotification
                                                object:nil];
 
     [self adoptFromMini];
@@ -4793,6 +4806,11 @@ static NSMutableArray *YTJamItems = nil;
 
         [card setHidden:NO];
         [card bind:[related objectAtIndex:i]];
+
+        // Список пришёл, пока колонка спрятана, — и новым карточкам ждать выхода.
+        if (_columnReleased) {
+            [card releaseImages];
+        }
     }
 
     [[self view] setNeedsLayout];
@@ -7989,8 +8007,106 @@ static NSMutableArray *YTJamItems = nil;
     });
 }
 
+/**
+ * На время полного экрана спрятанная колонка похожих отдаёт превью.
+ *
+ * Карточки просят картинки при раскладке, а раскладываются все сразу,
+ * и те, что за краем колонки. На iPad 1 это два десятка превью с готовыми
+ * скруглёнными кадрами, около полумегабайта на карточку, и в полном экране
+ * они лежат без дела: колонку не видно. А на iPad 1 именно полноэкранный
+ * показ упирается в память: журналы 30.10.2026 — две просьбы системы
+ * за ролик и снятие при выходе из полного экрана, на 51 МБ.
+ *
+ * Только там, где с памятью тесно; на прочих возвращать картинки
+ * незачем, и выход остаётся мгновенным.
+ */
+- (void)releaseColumnImages {
+    if (!_fullscreenMode || _columnReleased || !YTTightMemory()) {
+        return;
+    }
+
+    [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                             selector:@selector(restoreNextColumnImage)
+                                               object:nil];
+    _columnRestoring = nil;
+    _columnReleased = YES;
+
+    for (YTVideoCard *card in _relatedCards) {
+        [card releaseImages];
+    }
+
+    YTLogWriteNow(@"[YouTube/Плеер] Полный экран: превью похожих отпущены (%lu), занято %.0f МБ",
+                  (unsigned long)[_relatedCards count], YTResidentMegabytes());
+}
+
+/** Расстояние карточки до видимой части колонки; ноль — видна. */
+static CGFloat YTCardDistance(UIView *card, CGRect visible) {
+    CGRect frame = [card frame];
+
+    if (CGRectIntersectsRect(frame, visible)) {
+        return 0;
+    }
+
+    return MIN(fabs(CGRectGetMinY(frame) - CGRectGetMaxY(visible)),
+               fabs(CGRectGetMaxY(frame) - CGRectGetMinY(visible)));
+}
+
+/**
+ * Выход из полного экрана: превью возвращаются по одной, видимые первыми.
+ *
+ * Разом все двадцать — это двадцать декодирований и двадцать скруглённых
+ * кадров в одном проходе, ровно в ту минуту, когда на экран возвращаются
+ * и страница, и колонка. По одной раз в 0,12 с видимые приходят за
+ * полсекунды, а весь список — за две-три.
+ */
+- (void)restoreColumnImages {
+    if (!_columnReleased) {
+        return;
+    }
+
+    _columnReleased = NO;
+
+    UIScrollView *host = (UIScrollView *)[self listHost];
+    CGRect visible = CGRectMake([host contentOffset].x, [host contentOffset].y,
+                                [host bounds].size.width, [host bounds].size.height);
+
+    _columnRestoring = [[_relatedCards sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
+        CGFloat left = YTCardDistance(a, visible);
+        CGFloat right = YTCardDistance(b, visible);
+
+        return (left < right) ? NSOrderedAscending
+             : (left > right) ? NSOrderedDescending : NSOrderedSame;
+    }] mutableCopy];
+
+    YTLogWriteNow(@"[YouTube/Плеер] Выход из полного экрана: превью возвращаем по одной (%lu), "
+                  @"занято %.0f МБ", (unsigned long)[_columnRestoring count], YTResidentMegabytes());
+
+    // Первая — после раскладки: пусть сперва встанут на места страница и колонка.
+    [self performSelector:@selector(restoreNextColumnImage) withObject:nil afterDelay:0.3];
+}
+
+- (void)restoreNextColumnImage {
+    if ([_columnRestoring count] == 0) {
+        _columnRestoring = nil;
+        return;
+    }
+
+    YTVideoCard *card = [_columnRestoring objectAtIndex:0];
+
+    [_columnRestoring removeObjectAtIndex:0];
+    [card restoreImages];
+
+    [self performSelector:@selector(restoreNextColumnImage) withObject:nil afterDelay:0.12];
+}
+
 - (void)fullscreenTapped {
     _fullscreenMode = !_fullscreenMode;
+
+    if (_fullscreenMode) {
+        [self releaseColumnImages];
+    } else {
+        [self restoreColumnImages];
+    }
 
     /**
      * Уходя из полного экрана, снимаем и зум.
