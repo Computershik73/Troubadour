@@ -6,6 +6,7 @@
 void YTCrashWatchStart(void) {}
 void YTCrashWatchForeground(BOOL foreground) {}
 void YTCrashWatchClean(void) {}
+void YTCrashWatchUpdating(void) {}
 
 #else
 
@@ -177,6 +178,10 @@ void YTCrashWatchForeground(BOOL foreground) {
 
 void YTCrashWatchClean(void) {
     YTCrashWriteState(@"clean");
+}
+
+void YTCrashWatchUpdating(void) {
+    YTCrashWriteState(@"update");
 }
 
 #pragma mark Отчёты системы
@@ -441,9 +446,11 @@ void YTCrashWatchStart(void) {
               @"так выглядит снятие системой (память) или SIGKILL");
     } else if ([how isEqualToString:@"background"]) {
         NSLog(@"[YouTube/Падение] Прошлый запуск кончился в фоне — фоновые система вправе снимать");
+    } else if ([how isEqualToString:@"update"]) {
+        NSLog(@"[YouTube/Падение] Прошлый запуск закончился установкой обновления — это не обрыв");
     }
 
-    if (last > 0 && ![how isEqualToString:@"clean"]) {
+    if (last > 0 && ![how isEqualToString:@"clean"] && ![how isEqualToString:@"update"]) {
         NSLog(@"[YouTube/Падение] Прошлый запуск: с %@ по последнюю отметку %@",
               [NSDate dateWithTimeIntervalSince1970:launched],
               [NSDate dateWithTimeIntervalSince1970:last]);

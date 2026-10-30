@@ -1,5 +1,6 @@
 #import "YTUpdate.h"
 
+#import "YTCrashWatch.h"
 #import "YTHttp.h"
 #import "YTStrings.h"
 
@@ -583,6 +584,9 @@ static NSComparisonResult YTCompareChunk(NSString *left, NSString *right) {
 
     pid_t child = 0;
 
+    // Установка закроет приложение — следующему запуску это не обрыв.
+    YTCrashWatchUpdating();
+
     int started = posix_spawn(&child, [tool fileSystemRepresentation],
                               &actions, NULL, argv, environ);
 
@@ -613,6 +617,9 @@ static NSComparisonResult YTCompareChunk(NSString *left, NSString *right) {
               [said stringByTrimmingCharactersInSet:
                   [NSCharacterSet whitespaceAndNewlineCharacterSet]]);
     }
+
+    // Живы после установки — значит, снова просто на экране.
+    YTCrashWatchForeground(YES);
 
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }

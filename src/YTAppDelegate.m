@@ -279,6 +279,8 @@
      *
      *   troubadour://debug/snapshot    снимок окна в Documents/snapshot.png
      *   troubadour://debug/scroll?y=N  прокрутка списка страницы ролика
+     *   troubadour://debug/release     как просьба системы о памяти
+     *   troubadour://debug/census      перепись памяти сейчас
      */
     if ([[url host] isEqualToString:@"debug"]) {
         if ([[url path] isEqualToString:@"/snapshot"]) {
@@ -298,6 +300,17 @@
             [UIImagePNGRepresentation(shot) writeToFile:path atomically:YES];
 
             NSLog(@"[YouTube/Отладка] Снимок окна: %@", path);
+        } else if ([[url path] isEqualToString:@"/release"]) {
+            // То же, что просьба системы о памяти, — чтобы мерить, сколько вернётся.
+            YTSetTightMemory();
+
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:YTReleaseHeavyNotification object:nil];
+
+            NSLog(@"[YouTube/Отладка] Тяжёлое отпущено по команде, занято %.0f МБ",
+                  YTResidentMegabytes());
+        } else if ([[url path] isEqualToString:@"/census"]) {
+            YTMemoryCensusNow(@"по команде");
         } else if ([[url path] isEqualToString:@"/scroll"]) {
             NSRange y = [text rangeOfString:@"y="];
             CGFloat offset = (y.location != NSNotFound)
