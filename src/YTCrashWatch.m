@@ -331,10 +331,20 @@ static void YTCrashTellCrash(NSString *path, NSString *name) {
 /** Новые отчёты системы — с прошлого запуска, не больше трёх, без повторов. */
 static void YTCrashTellReports(NSTimeInterval since) {
     NSFileManager *files = [NSFileManager defaultManager];
-    NSArray *names = [files contentsOfDirectoryAtPath:YTCrashReports error:NULL];
+    NSError *failure = nil;
+    NSArray *names = [files contentsOfDirectoryAtPath:YTCrashReports error:&failure];
 
+    /**
+     * Не открылась — так и пишем.
+     *
+     * Из IPA приложение в песочнице, и папка ему не видна, — это не беда.
+     * Но молчание здесь не отличить от «отчётов нет»: в журнале 30.10.2026
+     * обрыв на экране прошёл без единой строки об отчёте, и понять,
+     * писала ли система что-нибудь, было нельзя.
+     */
     if (names == nil) {
-        // Из IPA приложение в песочнице, и папка ему не видна — это не беда.
+        NSLog(@"[YouTube/Падение] Папка отчётов системы не открылась: %@",
+              [failure localizedDescription] ?: @"причина неизвестна");
         return;
     }
 
@@ -343,6 +353,20 @@ static void YTCrashTellReports(NSTimeInterval since) {
     NSTimeInterval from = MAX(seen, since - 60.0);
 
     NSMutableArray *fresh = [NSMutableArray array];
+
+    // Самый свежий файл папки, чей угодно: виден ли там хоть какой-то след.
+    NSString *newestName = nil;
+    NSDate *newestDate = nil;
+
+    for (NSString *name in names) {
+        NSDate *date = [[files attributesOfItemAtPath:
+            [YTCrashReports stringByAppendingPathComponent:name] error:NULL] fileModificationDate];
+
+        if (date != nil && (newestDate == nil || [date compare:newestDate] == NSOrderedDescending)) {
+            newestDate = date;
+            newestName = name;
+        }
+    }
 
     for (NSString *name in names) {
         BOOL memory = [name hasPrefix:@"LowMemory"] || [name hasPrefix:@"JetsamEvent"];
@@ -363,6 +387,9 @@ static void YTCrashTellReports(NSTimeInterval since) {
     }
 
     if ([fresh count] == 0) {
+        NSLog(@"[YouTube/Падение] Свежих отчётов о нас в папке системы нет "
+              @"(файлов %lu, самый новый: %@ от %@)", (unsigned long)[names count],
+              newestName ?: @"—", newestDate ?: (id)@"—");
         return;
     }
 
