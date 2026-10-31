@@ -384,4 +384,8 @@ static void YTJSDiscard(YTJSGlobalContextRef context) {
     }];
 }
 
+- (NSString *)censusNote {
+    return @"в голом движке JavaScriptCore";
+}
+
 @end

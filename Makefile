@@ -28,6 +28,16 @@ Troubadour_FILES = $(shell find src -name '*.m')
 # BLAKE2s, ChaCha20 на NEON). Берём их только из src/warp: в src/helper
 # лежит отдельная программа со своей main, ей в приложение нельзя.
 Troubadour_FILES += $(shell find src/warp -name '*.c')
+
+# QuickJS — движок для решателя `n` в своей зоне памяти (src/quickjs/README.md).
+# Чужой код: предупреждения его не наши, их глушим. И всегда -O2, даже
+# в отладочной сборке: на -O0 интерпретатор ползёт, а решатель и так
+# на iPad 1 поднимается секунды.
+QUICKJS_FILES = quickjs.c cutils.c dtoa.c libregexp.c libunicode.c
+Troubadour_FILES += $(addprefix src/quickjs/,$(QUICKJS_FILES))
+QUICKJS_CFLAGS = -w -O2 -DYT_QJS_NO_ATOMICS -DCONFIG_VERSION='"2026-06-04"'
+$(foreach f,$(QUICKJS_FILES),$(eval src/quickjs/$(f)_CFLAGS = $(QUICKJS_CFLAGS)))
+
 Troubadour_CFLAGS  = -fobjc-arc -Wall -Wno-deprecated-declarations
 Troubadour_CFLAGS += $(addprefix -I,$(shell find src -type d))
 

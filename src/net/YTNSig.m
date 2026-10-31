@@ -5,13 +5,17 @@
 #import "YTHttp.h"
 #import "YTJSEngine.h"
 #import "YTPlayerJs.h"
+#import "YTQuickJS.h"
 #import "YTUtil.h"
 #import "YTMemoryCensus.h"
 
-/** Сколько подъёмов голого движка подряд оборвалось на полпути. */
+/** Сколько подъёмов в голом JavaScriptCore подряд оборвалось на полпути. */
 static NSString *const YTNSigBareInterruptedKey = @"YTNSigBareInterrupted";
 
-/** Сборка плеера, к которой относится этот счёт. */
+/** То же для QuickJS. */
+static NSString *const YTNSigQuickInterruptedKey = @"YTNSigQuickInterrupted";
+
+/** Сборка плеера, к которой относятся эти счёты. */
 static NSString *const YTNSigBarePlayerKey = @"YTNSigBarePlayer";
 
 /** Имена, под которыми прежняя версия хранила вырезанную функцию. */
@@ -80,8 +84,8 @@ static NSString *YTNSigBase64(NSData *data) {
 @implementation YTNSig {
     UIWebView *_web;
 
-    /** Решатель в голом движке; при нём веб-вида нет (см. bootBare:). */
-    YTJSEngine *_js;
+    /** Решатель в движке без веб-вида — QuickJS или JavaScriptCore (см. bootBare:). */
+    id<YTScriptEngine> _js;
 
     BOOL _started;
     BOOL _ready;
@@ -197,7 +201,7 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
                                              selector:@selector(bootTimedOut)
                                                object:nil];
 
-    YTJSEngine *engine = nil;
+    id<YTScriptEngine> engine = nil;
 
     @synchronized (self) {
         engine = _js;
@@ -205,9 +209,9 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
     }
 
     /**
-     * Голый движок отпускаем с фоновой очереди: освобождение кучи
-     * в десятки мегабайт на iPad 1 занимает заметное время, а ждать его
-     * главному потоку незачем.
+     * Движок отпускаем с фоновой очереди: освобождение кучи в десятки
+     * мегабайт на iPad 1 занимает заметное время, а ждать его главному
+     * потоку незачем.
      */
     if (engine != nil) {
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
@@ -295,18 +299,22 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
 
 /** Строка решателя в переписи памяти. */
 - (void)memoryCensus:(NSNotification *)note {
-    NSString *state;
+    id<YTScriptEngine> engine;
+    BOOL web;
 
     @synchronized (self) {
-        state = (_js != nil) ? @"в голом движке"
-              : (_web != nil) ? @"в веб-виде" : @"выгружен";
+        engine = _js;
+        web = (_web != nil);
     }
+
+    NSString *state = (engine != nil) ? [engine censusNote]
+                    : web ? @"в веб-виде" : @"выгружен";
 
     [[[note userInfo] objectForKey:YTMemoryCensusNotesKey] addObject:
         [@"решатель n " stringByAppendingString:state]];
 }
 
-/** Поднят ли решатель — в веб-виде или в голом движке. */
+/** Поднят ли решатель — в веб-виде или в движке без него. */
 - (BOOL)holdsSolver {
     @synchronized (self) {
         return _web != nil || _js != nil;
@@ -381,15 +389,19 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
 }
 
 /**
- * Решатель без веб-вида — в голом движке системы (YTJSEngine).
+ * Решатель без веб-вида: сперва во встроенном QuickJS (YTQuickJS), потом
+ * в голом движке системы (YTJSEngine).
  *
- * Тот же `nsig.js` и тот же JavaScriptCore, что внутри UIWebView, но без
- * WebCore и без HTML-страницы: скрипт плеера идёт в движок прямо из файла,
- * без base64 и без копии в разметке. Чего плееру не хватает от браузера,
- * даёт `nsig-env.js`. На компьютере этим путём три сборки плеера
- * (67288f35, cbcfbf2f, dce23b30) дали те же ответы, что веб-вид на iPad.
+ * Тот же `nsig.js`, но без WebCore и без HTML-страницы: скрипт плеера идёт
+ * в движок прямо из файла, без base64 и без копии в разметке. Чего плееру
+ * не хватает от браузера, даёт `nsig-env.js`. На компьютере этим путём
+ * три сборки плеера (67288f35, cbcfbf2f, dce23b30) дали те же ответы, что
+ * веб-вид на iPad, а QuickJS — те же, что JavaScriptCore (11a45ffb).
  *
- * Не вышло — пишем, на чём, и поднимаем веб-вид, как прежде.
+ * QuickJS первым из-за памяти: его куча в своей зоне и при выгрузке
+ * возвращается вся, а у JavaScriptCore iOS 5/6 из 31 МБ возвращались 5.
+ *
+ * Не вышло нигде — пишем, на чём, и поднимаем веб-вид, как прежде.
  */
 - (BOOL)bootBare:(NSData *)script solver:(NSString *)solver player:(NSString *)player {
     NSString *path = [[NSBundle mainBundle] pathForResource:@"nsig-env" ofType:@"js"];
@@ -397,47 +409,76 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
         ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL]
         : nil;
 
-    if ([env length] == 0 || ![YTJSEngine available]) {
+    if ([env length] == 0) {
         return NO;
     }
 
-    /**
-     * Страховка: подъём, оборвавшийся дважды подряд, — больше не пробуем.
-     *
-     * Этот путь новый, а проверить его на всех устройствах заранее нельзя.
-     * Упади движок посреди подъёма (или сними систему приложение за память),
-     * отметка о начатом подъёме останется, и после второго такого раза
-     * решатель живёт в веб-виде, а не падает при каждом ролике.
-     */
     NSUserDefaults *settings = [NSUserDefaults standardUserDefaults];
-    NSInteger interrupted = [settings integerForKey:YTNSigBareInterruptedKey];
 
     // Счёт ведётся на сборку плеера: с новой сборкой пробуем снова.
     if (![[settings stringForKey:YTNSigBarePlayerKey] isEqualToString:player]) {
-        interrupted = 0;
-
+        [settings setInteger:0 forKey:YTNSigQuickInterruptedKey];
+        [settings setInteger:0 forKey:YTNSigBareInterruptedKey];
         [settings setObject:player forKey:YTNSigBarePlayerKey];
     }
 
+    BOOL booted = [self guarded:YTNSigQuickInterruptedKey name:@"QuickJS" boot:^BOOL {
+        YTQuickJS *engine = [YTQuickJS engine];
+
+        // Байткод — рядом со скриптом плеера и уходит вместе с ним (см. store:).
+        [engine setBytecodePath:[[[self scriptPath:player] stringByDeletingPathExtension]
+                                    stringByAppendingPathExtension:@"qjs"]];
+
+        return [self bootBareChecked:script env:env solver:solver player:player
+                              engine:engine name:@"QuickJS"];
+    }];
+
+    if (booted || ![YTJSEngine available]) {
+        return booted;
+    }
+
+    return [self guarded:YTNSigBareInterruptedKey name:@"JavaScriptCore" boot:^BOOL {
+        return [self bootBareChecked:script env:env solver:solver player:player
+                              engine:[YTJSEngine engine] name:@"JavaScriptCore"];
+    }];
+}
+
+/**
+ * Страховка: подъём, оборвавшийся дважды подряд, — больше не пробуем.
+ *
+ * Упади движок посреди подъёма (или сними система приложение за память),
+ * отметка о начатом подъёме останется, и после второго такого раза
+ * решатель идёт к следующему движку, а не падает при каждом ролике.
+ */
+- (BOOL)guarded:(NSString *)key name:(NSString *)name boot:(BOOL (^)(void))boot {
+    NSUserDefaults *settings = [NSUserDefaults standardUserDefaults];
+    NSInteger interrupted = [settings integerForKey:key];
+
     if (interrupted >= 2) {
-        static BOOL told = NO;
+        static NSMutableSet *told = nil;
 
-        if (!told) {
-            told = YES;
+        @synchronized ([YTNSig class]) {
+            if (told == nil) {
+                told = [NSMutableSet set];
+            }
 
-            NSLog(@"[YouTube/Ключ] Подъём без веб-вида дважды оборвался — решатель в веб-виде");
+            if (![told containsObject:key]) {
+                [told addObject:key];
+
+                NSLog(@"[YouTube/Ключ] Подъём в %@ дважды оборвался — обходимся без него", name);
+            }
         }
 
         return NO;
     }
 
-    [settings setInteger:interrupted + 1 forKey:YTNSigBareInterruptedKey];
+    [settings setInteger:interrupted + 1 forKey:key];
     [settings synchronize];
 
-    BOOL booted = [self bootBareChecked:script env:env solver:solver player:player];
+    BOOL booted = boot();
 
     // Дошли до конца сами, удачно или нет, — подъём не оборвался.
-    [settings setInteger:0 forKey:YTNSigBareInterruptedKey];
+    [settings setInteger:0 forKey:key];
     [settings synchronize];
 
     return booted;
@@ -446,14 +487,14 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
 - (BOOL)bootBareChecked:(NSData *)script
                     env:(NSString *)env
                  solver:(NSString *)solver
-                 player:(NSString *)player {
+                 player:(NSString *)player
+                 engine:(id<YTScriptEngine>)engine
+                   name:(NSString *)name {
     NSTimeInterval started = [NSDate timeIntervalSinceReferenceDate];
     double before = YTResidentMegabytes();
 
-    YTJSEngine *engine = [YTJSEngine engine];
-
     if (engine == nil) {
-        NSLog(@"[YouTube/Ключ] Голый движок не дал контекста — поднимаем веб-вид");
+        NSLog(@"[YouTube/Ключ] %@ не дал контекста", name);
 
         return NO;
     }
@@ -483,8 +524,8 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
     }
 
     if (![report hasPrefix:@"ok "]) {
-        NSLog(@"[YouTube/Ключ] Без веб-вида решатель не завёлся (плеер %@): %@ — "
-              @"поднимаем веб-вид", player, report ?: (error ?: @"пустой отчёт"));
+        NSLog(@"[YouTube/Ключ] В %@ решатель не завёлся (плеер %@): %@",
+              name, player, report ?: (error ?: @"пустой отчёт"));
 
         return NO;
     }
@@ -492,8 +533,8 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
     NSString *sample = [self evaluate:YTNSigSample in:engine];
 
     if ([sample length] == 0 || [sample isEqualToString:YTNSigSample]) {
-        NSLog(@"[YouTube/Ключ] Без веб-вида расшифровка не отвечает (%@) — поднимаем веб-вид",
-              [report substringFromIndex:3]);
+        NSLog(@"[YouTube/Ключ] В %@ расшифровка не отвечает (%@)",
+              name, [report substringFromIndex:3]);
 
         return NO;
     }
@@ -508,9 +549,9 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
     YTMain(^{ [self dropWebView]; });
 
     [self finish:player line:[NSString stringWithFormat:
-        @"[YouTube/Ключ] Готово без веб-вида: расшифровка `n` заведена, плеер %@, %@ "
+        @"[YouTube/Ключ] Готово без веб-вида, в %@: расшифровка `n` заведена, плеер %@, %@ "
         @"(проверка: %@ → %@), за %.1f с, память %.0f → %.0f МБ",
-        player, [report substringFromIndex:3], YTNSigSample, sample,
+        name, player, [report substringFromIndex:3], YTNSigSample, sample,
         [NSDate timeIntervalSinceReferenceDate] - started, before, YTResidentMegabytes()]];
 
     return YES;
@@ -618,14 +659,15 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
     return nil;
 }
 
-/** Кладёт скрипт в кеш и убирает скрипты прежних сборок. */
+/** Кладёт скрипт в кеш и убирает скрипты прежних сборок вместе с их байткодом. */
 - (void)store:(NSData *)body player:(NSString *)player {
     NSFileManager *files = [NSFileManager defaultManager];
     NSString *path = [self scriptPath:player];
     NSString *directory = [path stringByDeletingLastPathComponent];
+    NSSet *kinds = [NSSet setWithObjects:@"js", @"qjs", @"part", nil];
 
     for (NSString *name in [files contentsOfDirectoryAtPath:directory error:NULL]) {
-        if ([name hasPrefix:@"player-"] && [name hasSuffix:@".js"]) {
+        if ([name hasPrefix:@"player-"] && [kinds containsObject:[name pathExtension]]) {
             [files removeItemAtPath:[directory stringByAppendingPathComponent:name]
                               error:NULL];
         }
@@ -799,8 +841,8 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
     return [NSString stringWithFormat:@"\"%@\"", escaped];
 }
 
-/** `YTn` в голом движке; nil, если ответа нет. */
-- (NSString *)evaluate:(NSString *)n in:(YTJSEngine *)engine {
+/** `YTn` в движке без веб-вида; nil, если ответа нет. */
+- (NSString *)evaluate:(NSString *)n in:(id<YTScriptEngine>)engine {
     NSString *result = [engine evaluate:[NSString stringWithFormat:
         @"(function(){try{return window.YTn(%@)||'';}catch(e){return '';}})()",
         [self quote:n]] error:NULL];
@@ -808,9 +850,9 @@ static const NSTimeInterval YTNSigBusySpan = 20.0;
     return ([result length] > 0) ? result : nil;
 }
 
-/** `YTn` — в голом движке, если он поднят, иначе на главном потоке в веб-виде. */
+/** `YTn` — в движке без веб-вида, если он поднят, иначе на главном потоке в веб-виде. */
 - (NSString *)evaluate:(NSString *)n {
-    YTJSEngine *engine = nil;
+    id<YTScriptEngine> engine = nil;
 
     @synchronized (self) {
         engine = _js;

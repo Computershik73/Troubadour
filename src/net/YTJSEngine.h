@@ -1,6 +1,34 @@
 #import <Foundation/Foundation.h>
 
 /**
+ * Что решателю `n` нужно от движка JavaScript — и от системного
+ * (YTJSEngine), и от встроенного QuickJS (YTQuickJS).
+ */
+@protocol YTScriptEngine <NSObject>
+
+/**
+ * Исполняет текст и возвращает результат строкой.
+ * Исключение — nil в ответе и его текст в `error`.
+ */
+- (NSString *)evaluate:(NSString *)script error:(NSString **)error;
+
+/**
+ * Кладёт в глобальную переменную строку из байтов UTF-8.
+ *
+ * Скрипт плеера идёт прямо из файла кеша: в строку Objective-C его
+ * не переводим, лишней копии в 4,8 МБ не будет.
+ */
+- (BOOL)setGlobal:(NSString *)name utf8:(NSData *)bytes;
+
+/** Просит движок собрать мусор. */
+- (void)collect;
+
+/** Где живёт решатель — строка для переписи памяти. */
+- (NSString *)censusNote;
+
+@end
+
+/**
  * Голый движок JavaScript — системный JavaScriptCore, но без веб-вида.
  *
  * Решатель `n` исполнял скрипт плеера в UIWebView, и на iPad 1 это
@@ -19,29 +47,12 @@
  * стек полмегабайта, а разбор скрипта плеера рекурсивен. Заодно главный
  * поток больше не стоит, пока скрипт исполняется.
  */
-@interface YTJSEngine : NSObject
+@interface YTJSEngine : NSObject <YTScriptEngine>
 
 /** Нашлись ли функции движка на этом устройстве. */
 + (BOOL)available;
 
 /** Новый пустой контекст; nil, если движка нет. */
 + (YTJSEngine *)engine;
-
-/**
- * Исполняет текст и возвращает результат строкой.
- * Исключение — nil в ответе и его текст в `error`.
- */
-- (NSString *)evaluate:(NSString *)script error:(NSString **)error;
-
-/**
- * Кладёт в глобальную переменную строку из байтов UTF-8.
- *
- * Скрипт плеера идёт прямо из файла кеша: в строку Objective-C его
- * не переводим, лишней копии в 4,8 МБ не будет.
- */
-- (BOOL)setGlobal:(NSString *)name utf8:(NSData *)bytes;
-
-/** Просит движок собрать мусор. */
-- (void)collect;
 
 @end
